@@ -429,3 +429,65 @@ async with sse_client("http://localhost:8000/sse") as (read, write):
             arguments={"project_path": "/path/to/project"}
         )
 ```
+
+
+## SSE 模式客户端接入
+
+SSE 模式适用于远程服务器部署，多个客户端可共享同一个 MCP 服务。
+
+### 1. 启动 SSE 服务
+
+
+
+启动后 SSE 端点为：
+
+### 2. Claude Desktop 配置
+
+编辑配置文件：
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+
+
+### 3. Claude Code 配置
+
+在项目根目录创建 `.mcp.json`：
+
+
+
+或全局配置 `~/.claude/mcp.json`。
+
+### 4. Cursor 配置
+
+在 Cursor Settings → MCP Servers 中添加，或编辑 `.cursor/mcp.json`：
+
+
+
+### 5. Cline (VS Code) 配置
+
+在 VS Code 设置中找到 Cline MCP Settings，添加：
+
+
+
+### 6. Windsurf 配置
+
+编辑 `~/.codeium/windsurf/mcp_config.json`：
+
+
+
+### 7. 通用 MCP 客户端 (Python)
+
+
+
+### 常见问题
+
+**Q: 连接超时？**
+- 检查防火墙是否开放端口：`sudo ufw allow 8000`
+- 确认服务绑定 `0.0.0.0` 而非 `127.0.0.1`
+
+**Q: 多客户端同时连接？**
+- SSE 模式支持多客户端并发，无需额外配置
+
+**Q: 如何加密传输？**
+- 建议使用 Nginx 反向代理 + HTTPS
+- 或通过 SSH 隧道：`ssh -L 8000:localhost:8000 user@server`
