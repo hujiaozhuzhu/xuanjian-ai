@@ -172,6 +172,46 @@ class TestRuleFilter:
         assert result.verdict == Verdict.FALSE_POSITIVE
         assert any("历史" in r.description for r in result.filter_reasons)
 
+    @pytest.mark.asyncio
+    async def test_java_prepared_statement_filtered(self, filter):
+        """Java PreparedStatement 应该被识别为误报"""
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='PreparedStatement ps = conn.prepareStatement(sql);\nps.setString(1, userId);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+        assert any("PreparedStatement" in r.description or "参数化" in r.description for r in result.filter_reasons)
+
+    @pytest.mark.asyncio
+    async def test_java_mybatis_hash_filtered(self, filter):
+        """MyBatis #{} 应该被识别为误报"""
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='select * from user where id = #{userId}',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_java_xss_escape_filtered(self, filter):
+        """使用HTML转义的XSS应该被识别为误报"""
+        sr = make_scan_result(
+            rule_id="java.lang.security.xss.reflected",
+            code='String safe = HtmlUtils.htmlEscape(userInput);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    def test_fingerprint_consistency(self):
+        """三层过滤器的指纹应该一致"""
+        sr = make_scan_result()
+        rf = RuleFilter({"enabled": True})
+        # 指纹函数应该可访问
+        fp = rf._compute_fingerprint(sr)
+        assert isinstance(fp, str)
+        assert len(fp) == 32  # MD5 hex
+
 
 # ============================================================
 # L2 上下文过滤器测试
@@ -277,7 +317,7 @@ class TestScannerManager:
         import os
         # 创建临时目录结构
         os.makedirs("/tmp/test_java_project", exist_ok=True)
-        with open("/tmp/test_java_project/pom.xml", "w") as f:
+        with open("/tmp/test_java_project/pom.xml", "w", encoding="utf-8") as f:
             f.write("<project></project>")
 
         mgr = ScannerManager()
@@ -402,3 +442,319 @@ class TestIntegration:
 
         # 真实漏洞不应该被标记为误报
         assert result.verdict != Verdict.FALSE_POSITIVE
+
+
+# ============================================================
+# Java 规则扩展测试 - 各类别误报规则
+# ============================================================
+
+class TestJavaSQLInjectionRules:
+    """SQL注入误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_prepared_statement(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='PreparedStatement ps = conn.prepareStatement("SELECT * FROM users WHERE id = ?");\nps.setString(1, userId);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_mybatis_hash_binding(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code="select * from user where id = #{userId} and name = #{userName}",
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_jpa_parameterized(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='Query q = em.createQuery("SELECT u FROM User u WHERE u.id = :id");\nq.setParameter("id", userId);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_spring_jdbcTemplate(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='jdbcTemplate.query("SELECT * FROM users WHERE id = ?", new Object[]{userId}, mapper);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_named_parameter_jdbc(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='namedParameterJdbcTemplate.query("SELECT * FROM users WHERE id = :id", params, mapper);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_mybatis_plus_lambda(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code="LambdaQueryWrapper<User> wrapper = Wrappers.lambdaQuery();\nwrapper.eq(User::getId, userId);",
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_jooq_dsl(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            code='dsl.selectFrom(USER).where(USER.ID.eq(userId)).fetch();',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_flyway_migration(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.injection.sql-injection",
+            file="src/main/resources/db/migration/V1__create_users.sql",
+            code="CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100));",
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaXSSRules:
+    """XSS误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_html_escape(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.xss.reflected",
+            code='String safe = HtmlUtils.htmlEscape(userInput);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_json_response(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.xss.reflected",
+            code='@RestController\npublic class ApiController {\n    @GetMapping("/api/user")\n    public User getUser() { ... }\n}',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_owasp_encoder(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.xss.reflected",
+            code='out.println(Encode.forHtml(userInput));',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaSSRFRules:
+    """SSRF误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_constant_url(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.ssrf",
+            code='URL url = new URL("https://api.example.com/data");',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_url_whitelist(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.ssrf",
+            code='if (!allowedHosts.contains(url.getHost())) throw new Exception();',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_feign_client(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.ssrf",
+            code='@FeignClient(name = "user-service", url = "${user.service.url}")',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaCommandInjectionRules:
+    """命令注入误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_constant_command(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.command.injection",
+            code='Runtime.getRuntime().exec("ls -la /tmp");',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_process_builder_array(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.command.injection",
+            code='new ProcessBuilder(List.of("ls", "-la", userInput)).start();',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_commons_exec(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.command.injection",
+            code='CommandLine cmd = CommandLine.parse("convert");\ncmd.addArgument(inputFile);\ndefaultExecutor.execute(cmd);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaPathTraversalRules:
+    """路径穿越误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_canonical_path(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.path.traversal",
+            code='File f = new File(baseDir, userInput);\nString canonical = f.getCanonicalPath();\nif (!canonical.startsWith(baseDir)) throw new Exception();',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_path_normalize(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.path.traversal",
+            code='Path p = Path.of(baseDir, userInput).normalize();',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_filename_utils(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.path.traversal",
+            code='String safe = FilenameUtils.getName(userInput);\nFile f = new File(uploadDir, safe);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaDeserializationRules:
+    """反序列化误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_object_input_filter(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.deserialization",
+            code='ObjectInputStream ois = new ObjectInputStream(input);\nois.setObjectInputFilter(filter);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_jackson_deserialization(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.deserialization",
+            code='ObjectMapper mapper = new ObjectMapper();\nUser user = mapper.readValue(json, User.class);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaCryptoRules:
+    """加密误报规则测试"""
+
+    @pytest.fixture
+    def filter(self):
+        return RuleFilter({"enabled": True})
+
+    @pytest.mark.asyncio
+    async def test_bcrypt(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.weak.crypto",
+            code='BCryptPasswordEncoder encoder = new BCryptPasswordEncoder();\nString hash = encoder.encode(password);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+    @pytest.mark.asyncio
+    async def test_secure_random(self, filter):
+        sr = make_scan_result(
+            rule_id="java.lang.security.insecure.crypto",
+            code='SecureRandom random = new SecureRandom();\nbyte[] bytes = new byte[32];\nrandom.nextBytes(bytes);',
+        )
+        result = await filter.filter(sr)
+        assert result.verdict == Verdict.FALSE_POSITIVE
+
+
+class TestJavaSecurityGuardPatterns:
+    """安全守卫模式测试"""
+
+    @pytest.fixture
+    def ctx_filter(self):
+        return ContextFilter({"enabled": True, "false_positive_threshold": 0.5})
+
+    def test_security_guard_patterns_loaded(self):
+        from fp_sentinel.rules.java.rules import JAVA_SECURITY_GUARD_PATTERNS
+        assert "sql_injection" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "xss" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "ssrf" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "command_injection" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "path_traversal" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "deserialization" in JAVA_SECURITY_GUARD_PATTERNS
+        assert "security_guard" in JAVA_SECURITY_GUARD_PATTERNS
+
+    def test_security_guard_has_spring_security(self):
+        from fp_sentinel.rules.java.rules import JAVA_SECURITY_GUARD_PATTERNS
+        guards = JAVA_SECURITY_GUARD_PATTERNS["security_guard"]
+        patterns_text = " ".join(guards)
+        assert "PreAuthorize" in patterns_text
+        assert "Secured" in patterns_text
+        assert "JWT" in patterns_text
+
+    def test_security_guard_has_shiro(self):
+        from fp_sentinel.rules.java.rules import JAVA_SECURITY_GUARD_PATTERNS
+        guards = JAVA_SECURITY_GUARD_PATTERNS["security_guard"]
+        patterns_text = " ".join(guards)
+        assert "RequiresPermissions" in patterns_text
+        assert "RequiresRoles" in patterns_text
+
+    def test_rule_count_at_least_60(self):
+        from fp_sentinel.rules.java.rules import JAVA_FALSE_POSITIVE_RULES
+        assert len(JAVA_FALSE_POSITIVE_RULES) >= 60
+
+

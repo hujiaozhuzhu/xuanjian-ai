@@ -9,12 +9,14 @@ L2: 上下文过滤器
 """
 
 import re
+from collections import OrderedDict
 from typing import List, Optional, Dict, Any, Tuple
 from pathlib import Path
 from ..models import (
     ScanResult, FilterResult, FilterReason, Verdict,
     ContextAnalysisResult, JavaAnalysisResult, ScanTool,
 )
+from ..rules.java.rules import JAVA_SECURITY_GUARD_PATTERNS
 
 
 class ContextFilter:
@@ -24,7 +26,8 @@ class ContextFilter:
         self.config = config or {}
         self.enabled = self.config.get("enabled", True)
         self.fp_threshold = self.config.get("false_positive_threshold", 0.5)
-        self._file_cache: Dict[str, str] = {}
+        self._file_cache: OrderedDict[str, str] = OrderedDict()
+        self._file_cache_max = self.config.get("file_cache_max", 256)
 
         # Java 安全守卫关键词
         self.java_security_guards = [
@@ -111,6 +114,8 @@ class ContextFilter:
         """读取文件上下文行"""
         file_path = scan_result.file
         if file_path in self._file_cache:
+            # LRU: 移到末尾表示最近使用
+            self._file_cache.move_to_end(file_path)
             lines = self._file_cache[file_path].split('\n')
         else:
             path = Path(file_path)
@@ -119,6 +124,9 @@ class ContextFilter:
             try:
                 content = path.read_text(encoding='utf-8', errors='ignore')
                 self._file_cache[file_path] = content
+                # LRU: 超出上限时淘汰最久未使用的条目
+                if len(self._file_cache) > self._file_cache_max:
+                    self._file_cache.popitem(last=False)
                 lines = content.split('\n')
             except Exception:
                 return None
@@ -172,6 +180,15 @@ class ContextFilter:
     ) -> JavaAnalysisResult:
         """Java 特定上下文分析"""
         context_text = '\n'.join(context_lines)
+
+        # 确定漏洞类型，选择对应的安全守卫模式
+        vuln_type = self._classify_vuln_type(scan_result.rule_id)
+        guard_patterns = JAVA_SECURITY_GUARD_PATTERNS.get(vuln_type, [])
+        # 合并通用 Java 守卫关键词（向后兼容）
+        guard_keywords = list(guard_patterns)
+        for g in self.java_security_guards:
+            if g.lower() not in [gp.lower() for gp in guard_patterns]:
+                guard_keywords.append(g)
 
         # 检测 PreparedStatement
         uses_ps = bool(re.search(
@@ -241,6 +258,15 @@ class ContextFilter:
             adjustment += 0.25
         if has_cmd_whitelist and 'command' in scan_result.rule_id.lower():
             adjustment += 0.25
+
+        # 使用分类安全守卫模式做更精确的上下文匹配
+        if guard_patterns:
+            matched_guards = []
+            for pattern in guard_patterns:
+                if re.search(pattern, context_text):
+                    matched_guards.append(pattern)
+            if matched_guards:
+                adjustment += min(0.3, len(matched_guards) * 0.1)
 
         return JavaAnalysisResult(
             uses_prepared_statement=uses_ps,
@@ -372,6 +398,21 @@ class ContextFilter:
 
     def _is_java_file(self, path: str) -> bool:
         return path.endswith('.java') or path.endswith('.class')
+
+    def _classify_vuln_type(self, rule_id: str) -> str:
+        """根据规则ID分类漏洞类型，用于选择对应的安全守卫模式"""
+        rid = rule_id.lower()
+        if ('sql' in rid or 'injection' in rid) and 'command' not in rid:
+            return 'sql_injection'
+        if 'xss' in rid or 'cross.site' in rid:
+            return 'xss'
+        if 'ssrf' in rid or 'url' in rid:
+            return 'ssrf'
+        if 'command' in rid or 'exec' in rid or 'rce' in rid:
+            return 'command_injection'
+        if 'path' in rid or 'traversal' in rid or 'file.read' in rid:
+            return 'path_traversal'
+        return 'unknown'
 
     def _calc_risk(self, scan_result: ScanResult, is_fp: bool, confidence: float) -> float:
         base = {"CRITICAL": 9.0, "HIGH": 7.5, "MEDIUM": 5.0, "LOW": 3.0, "INFO": 1.0}.get(

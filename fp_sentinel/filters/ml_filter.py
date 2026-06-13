@@ -49,6 +49,20 @@ class MLFilter:
                 return
 
             if Path(self.model_path).exists():
+                import os
+                file_size = os.path.getsize(self.model_path)
+                max_size = self.config.get("max_pickle_size_bytes", 50 * 1024 * 1024)  # 50MB
+                if file_size > max_size:
+                    logger.error(
+                        f"Pickle model file ({file_size} bytes) exceeds max allowed size "
+                        f"({max_size} bytes). Rejecting load for safety."
+                    )
+                    return
+                logger.warning(
+                    f"Loading pickle model from {self.model_path} - "
+                    f"pickle deserialization is inherently unsafe. "
+                    f"Consider migrating to ONNX format for production use."
+                )
                 with open(self.model_path, 'rb') as f:
                     self.model = pickle.load(f)
                 logger.info(f"Loaded pickle model: {self.model_path}")

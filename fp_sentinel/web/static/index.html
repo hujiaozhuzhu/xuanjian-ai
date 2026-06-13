@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>玄鉴 XuanJian - 代码审计误报排查</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus/dist/index.dark.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/themes/prism-tomorrow.min.css">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div id="app">
+    <el-container class="app-container">
+      <!-- 顶部导航 -->
+      <el-header class="app-header">
+        <div class="header-left">
+          <h1 class="logo">🔍 玄鉴 XuanJian</h1>
+          <span class="header-tag">v0.1.0</span>
+        </div>
+        <el-menu
+          mode="horizontal"
+          :default-active="currentPage"
+          @select="handleMenuSelect"
+          class="header-nav"
+          background-color="transparent"
+          text-color="#999"
+          active-text-color="#60a5fa"
+        >
+          <el-menu-item index="dashboard">仪表板</el-menu-item>
+          <el-menu-item index="scan">扫描</el-menu-item>
+          <el-menu-item index="findings">发现列表</el-menu-item>
+        </el-menu>
+        <div class="header-right">
+          <span class="ws-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
+          <span class="ws-label">{{ wsConnected ? '已连接' : '就绪' }}</span>
+        </div>
+      </el-header>
+
+      <!-- 主内容 -->
+      <el-main class="app-main">
+
+        <!-- ═══ 首页仪表板 ═══ -->
+        <div v-if="currentPage === 'dashboard'" class="page-dashboard">
+          <!-- 统计卡片 -->
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="6" v-for="card in statsCards" :key="card.label">
+              <div class="stat-card" :style="{borderTopColor: card.color}">
+                <div class="stat-value" :style="{color: card.color}">{{ card.value }}</div>
+                <div class="stat-label">{{ card.label }}</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <el-row :gutter="16">
+            <!-- 误报过滤率饼图 -->
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">📊 误报过滤率</h3>
+                <div class="chart-container">
+                  <canvas id="pie-chart" width="300" height="300"></canvas>
+                </div>
+                <div class="chart-legend">
+                  <span v-for="item in pieData" :key="item.label">
+                    <i class="legend-dot" :style="{background: item.color}"></i>
+                    {{ item.label }}: {{ item.value }}
+                  </span>
+                </div>
+              </div>
+            </el-col>
+
+            <!-- 最近扫描列表 -->
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">🕐 最近扫描</h3>
+                <div class="scan-list">
+                  <div v-if="recentScans.length === 0" class="empty-hint">暂无扫描记录</div>
+                  <div v-for="s in recentScans" :key="s.id" class="scan-item" @click="goToFindings(s.id)">
+                    <div class="scan-item-header">
+                      <span class="scan-path">{{ s.project_path }}</span>
+                      <el-tag size="small" :type="s.status === 'completed' ? 'success' : s.status === 'failed' ? 'danger' : 'warning'">
+                        {{ s.status }}
+                      </el-tag>
+                    </div>
+                    <div class="scan-item-meta">
+                      <span>{{ s.language }}</span>
+                      <span>{{ s.total_findings }} 个发现</span>
+                      <span>{{ s.duration_seconds ? s.duration_seconds + 's' : '-' }}</span>
+                      <span>{{ formatTime(s.started_at) }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ 扫描页面 ═══ -->
+        <div v-if="currentPage === 'scan'" class="page-scan">
+          <div class="panel scan-panel">
+            <h3 class="panel-title">🚀 启动扫描</h3>
+            <el-form label-position="top" class="scan-form">
+              <el-form-item label="项目路径">
+                <el-input
+                  v-model="scanForm.projectPath"
+                  placeholder="/path/to/your/project"
+                  clearable
+                  size="large"
+                />
+              </el-form-item>
+              <el-form-item label="语言">
+                <el-radio-group v-model="scanForm.language">
+                  <el-radio-button value="auto">Auto</el-radio-button>
+                  <el-radio-button value="java">Java</el-radio-button>
+                  <el-radio-button value="python">Python</el-radio-button>
+                </el-radio-group>
+              </el-form-item>
+              <el-form-item label="扫描器">
+                <el-checkbox-group v-model="scanForm.scanners">
+                  <el-checkbox value="semgrep" label="Semgrep" />
+                  <el-checkbox value="bandit" label="Bandit" />
+                  <el-checkbox value="findsecbugs" label="FindSecBugs" />
+                </el-checkbox-group>
+              </el-form-item>
+              <el-form-item>
+                <el-button
+                  type="primary"
+                  size="large"
+                  :loading="scanning"
+                  @click="startScan"
+                >
+                  {{ scanning ? '扫描中...' : '开始扫描' }}
+                </el-button>
+              </el-form-item>
+            </el-form>
+
+            <!-- 实时扫描状态 -->
+            <div v-if="scanProgress.show" class="scan-progress-section">
+              <el-divider />
+              <div class="progress-header">
+                <span>扫描进度</span>
+                <el-tag :type="progressTagType">{{ progressLabel }}</el-tag>
+              </div>
+              <el-progress
+                :percentage="scanProgress.percent"
+                :status="progressStatus"
+                :stroke-width="10"
+                striped
+                striped-flow
+              />
+              <div class="progress-detail" v-if="scanProgress.message">
+                {{ scanProgress.message }}
+              </div>
+              <div v-if="scanProgress.result" class="scan-result-summary">
+                <el-descriptions :column="2" border size="small">
+                  <el-descriptions-item label="扫描ID">
+                    <code>{{ scanProgress.result.scan_id }}</code>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="总发现数">
+                    {{ scanProgress.result.total_findings }}
+                  </el-descriptions-item>
+                  <el-descriptions-item label="耗时">
+                    {{ scanProgress.result.duration_seconds }}s
+                  </el-descriptions-item>
+                  <el-descriptions-item label="减少率">
+                    {{ scanProgress.result.statistics?.reduction_rate || '-' }}
+                  </el-descriptions-item>
+                </el-descriptions>
+                <el-button type="primary" @click="goToFindings(scanProgress.result.scan_id)" style="margin-top:12px">
+                  查看发现列表 →
+                </el-button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ 发现列表页 ═══ -->
+        <div v-if="currentPage === 'findings'" class="page-findings">
+          <div class="panel">
+            <div class="findings-toolbar">
+              <h3 class="panel-title">📋 发现列表</h3>
+              <div class="toolbar-actions">
+                <el-select v-model="findingsFilter.verdict" placeholder="判定过滤" clearable size="small" @change="loadFindings">
+                  <el-option label="全部" value="" />
+                  <el-option label="误报" value="false_positive" />
+                  <el-option label="疑似误报" value="likely_false_positive" />
+                  <el-option label="真实问题" value="true_positive" />
+                  <el-option label="待复核" value="needs_review" />
+                </el-select>
+                <el-select v-model="findingsFilter.severity" placeholder="严重程度" clearable size="small" @change="loadFindings">
+                  <el-option label="全部" value="" />
+                  <el-option label="CRITICAL" value="CRITICAL" />
+                  <el-option label="HIGH" value="HIGH" />
+                  <el-option label="MEDIUM" value="MEDIUM" />
+                  <el-option label="LOW" value="LOW" />
+                  <el-option label="INFO" value="INFO" />
+                </el-select>
+                <el-input
+                  v-model="findingsFilter.search"
+                  placeholder="搜索文件路径/规则/消息..."
+                  clearable
+                  size="small"
+                  style="width:240px"
+                  @input="debounceLoadFindings"
+                >
+                  <template #prefix><el-icon><Search /></el-icon></template>
+                </el-input>
+                <el-button size="small" @click="exportCurrentFindings('json')">导出JSON</el-button>
+                <el-button size="small" @click="exportCurrentFindings('markdown')">导出MD</el-button>
+              </div>
+            </div>
+
+            <el-table
+              :data="findingsList"
+              stripe
+              highlight-current-row
+              size="small"
+              max-height="600"
+              @row-click="showDetail"
+              class="findings-table"
+              v-loading="findingsLoading"
+            >
+              <el-table-column label="严重程度" width="100">
+                <template #default="{row}">
+                  <el-tag :type="severityTagType(row.original.severity)" size="small" effect="dark">
+                    {{ row.original.severity }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="original.rule_id" label="规则" width="160" show-overflow-tooltip />
+              <el-table-column label="文件" min-width="200" show-overflow-tooltip>
+                <template #default="{row}">
+                  <code>{{ row.original.file }}:{{ row.original.line }}</code>
+                </template>
+              </el-table-column>
+              <el-table-column prop="original.message" label="消息" min-width="200" show-overflow-tooltip />
+              <el-table-column label="判定" width="110">
+                <template #default="{row}">
+                  <el-tag :type="verdictTagType(row.verdict)" size="small">
+                    {{ verdictLabel(row.verdict) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="置信度" width="80">
+                <template #default="{row}">
+                  {{ (row.confidence * 100).toFixed(0) }}%
+                </template>
+              </el-table-column>
+              <el-table-column label="风险" width="70">
+                <template #default="{row}">
+                  {{ row.risk_score?.toFixed(1) || '-' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="140" fixed="right">
+                <template #default="{row}">
+                  <el-button size="small" type="warning" text @click.stop="markFalsePositive(row.id)">
+                    误报
+                  </el-button>
+                  <el-button size="small" type="success" text @click.stop="markTruePositive(row.id)">
+                    真实
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+            <div class="table-footer">
+              共 {{ findingsList.length }} 条结果
+            </div>
+          </div>
+        </div>
+
+        <!-- ═══ 详情页（抽屉） ═══ -->
+        <el-drawer
+          v-model="detailVisible"
+          title="发现详情"
+          direction="rtl"
+          size="60%"
+          :before-close="closeDetail"
+        >
+          <div v-if="detailFinding" class="detail-content">
+            <!-- 基本信息 -->
+            <el-descriptions :column="2" border size="small" class="detail-desc">
+              <el-descriptions-item label="规则ID">
+                <code>{{ detailFinding.original.rule_id }}</code>
+              </el-descriptions-item>
+              <el-descriptions-item label="严重程度">
+                <el-tag :type="severityTagType(detailFinding.original.severity)" size="small" effect="dark">
+                  {{ detailFinding.original.severity }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="文件" :span="2">
+                <code>{{ detailFinding.original.file }}:{{ detailFinding.original.line }}</code>
+              </el-descriptions-item>
+              <el-descriptions-item label="扫描器">{{ detailFinding.original.tool }}</el-descriptions-item>
+              <el-descriptions-item label="语言">{{ detailFinding.original.metadata?.language || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="CWE">{{ detailFinding.original.cwe || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="OWASP">{{ detailFinding.original.owasp || '-' }}</el-descriptions-item>
+              <el-descriptions-item label="消息" :span="2">{{ detailFinding.original.message }}</el-descriptions-item>
+            </el-descriptions>
+
+            <!-- 代码高亮 -->
+            <div class="detail-section">
+              <h4>漏洞代码</h4>
+              <pre class="code-block"><code class="language-java" v-html="highlightedCode"></code></pre>
+            </div>
+
+            <!-- 判定信息 -->
+            <el-divider />
+            <el-descriptions :column="2" border size="small">
+              <el-descriptions-item label="判定">
+                <el-tag :type="verdictTagType(detailFinding.verdict)" size="small">
+                  {{ verdictLabel(detailFinding.verdict) }}
+                </el-tag>
+              </el-descriptions-item>
+              <el-descriptions-item label="置信度">
+                {{ (detailFinding.confidence * 100).toFixed(1) }}%
+              </el-descriptions-item>
+              <el-descriptions-item label="风险评分">
+                {{ detailFinding.risk_score?.toFixed(1) || '-' }} / 10
+              </el-descriptions-item>
+              <el-descriptions-item label="建议" :span="2">
+                {{ detailFinding.recommendation }}
+              </el-descriptions-item>
+            </el-descriptions>
+
+            <!-- 过滤原因 -->
+            <div class="detail-section" v-if="detailFinding.filter_reasons?.length">
+              <h4>过滤原因</h4>
+              <div v-for="(reason, idx) in detailFinding.filter_reasons" :key="idx" class="reason-card">
+                <div class="reason-header">
+                  <el-tag size="small" type="info">{{ reason.filter_level }}</el-tag>
+                  <strong>{{ reason.rule_name }}</strong>
+                  <span class="reason-conf">置信度: {{ (reason.confidence * 100).toFixed(0) }}%</span>
+                </div>
+                <div class="reason-desc">{{ reason.description }}</div>
+              </div>
+            </div>
+
+            <!-- 上下文分析 -->
+            <div class="detail-section" v-if="detailFinding.context_analysis">
+              <h4>上下文分析</h4>
+              <el-descriptions :column="2" border size="small">
+                <el-descriptions-item label="死代码">
+                  {{ detailFinding.context_analysis.is_dead_code ? '是' : '否' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="安全守卫">
+                  {{ detailFinding.context_analysis.has_security_guards ? '是' : '否' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="输入验证">
+                  {{ detailFinding.context_analysis.has_input_validation ? '是' : '否' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="测试代码">
+                  {{ detailFinding.context_analysis.is_in_test ? '是' : '否' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="数据流长度">
+                  {{ detailFinding.context_analysis.data_flow_length }}
+                </el-descriptions-item>
+                <el-descriptions-item label="复杂度">
+                  {{ detailFinding.context_analysis.complexity_score?.toFixed(2) || '-' }}
+                </el-descriptions-item>
+              </el-descriptions>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="detail-actions">
+              <el-button type="warning" @click="markFalsePositive(detailFinding.id)">
+                标记误报
+              </el-button>
+              <el-button type="success" @click="markTruePositive(detailFinding.id)">
+                标记真实问题
+              </el-button>
+              <el-button @click="exportSingleFinding('json')">导出JSON</el-button>
+              <el-button @click="exportSingleFinding('markdown')">导出Markdown</el-button>
+            </div>
+          </div>
+        </el-drawer>
+      </el-main>
+    </el-container>
+  </div>
+
+  <!-- 依赖 -->
+  <script src="https://cdn.jsdelivr.net/npm/vue@3/dist/vue.global.prod.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/element-plus/dist/index.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/prism.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-java.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/prismjs@1.29.0/components/prism-python.min.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

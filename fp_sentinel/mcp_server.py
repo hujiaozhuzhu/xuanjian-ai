@@ -95,7 +95,7 @@ class MCPAuditServer:
                 JSON 格式的扫描结果（含 scan_id、统计信息）
             """
             import uuid, time
-            from datetime import datetime
+            from datetime import datetime, timezone
 
             scan_id = str(uuid.uuid4())
             start = time.monotonic()
@@ -114,7 +114,7 @@ class MCPAuditServer:
                 "project_path": project_path,
                 "language": language,
                 "status": "running",
-                "started_at": datetime.utcnow().isoformat(),
+                "started_at": datetime.now(timezone.utc).isoformat(),
             }
 
             try:
@@ -135,7 +135,7 @@ class MCPAuditServer:
 
                 server._scans[scan_id].update({
                     "status": "completed",
-                    "completed_at": datetime.utcnow().isoformat(),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
                     "findings": [fr.id for fr in filtered],
                     "stats": stats.model_dump(),
                 })
@@ -176,11 +176,9 @@ class MCPAuditServer:
             if not scan:
                 return json.dumps({"error": f"扫描 {scan_id} 不存在"}, ensure_ascii=False)
 
+            # 始终从L1开始执行；根据启用的filter决定执行到哪一层
+            # _apply_filters 内部根据 use_* 参数跳过对应层
             level = "all"
-            if not use_baseline:
-                level = "L2" if use_context_filter else "L1"
-            elif not use_context_filter:
-                level = "L3" if use_baseline else "L1"
 
             findings_ids = scan.get("findings", [])
             results = []
@@ -188,7 +186,11 @@ class MCPAuditServer:
                 fr = server._findings.get(fid)
                 if fr:
                     # 重新应用过滤
-                    new_fr = await server._apply_filters(fr.original, filter_level=level)
+                    new_fr = await server._apply_filters(
+                        fr.original, filter_level=level,
+                        use_context_filter=use_context_filter,
+                        use_baseline=use_baseline,
+                    )
                     new_fr.id = fid
                     server._findings[fid] = new_fr
                     results.append(new_fr.model_dump())
@@ -462,6 +464,8 @@ class MCPAuditServer:
         scan_result: ScanResult,
         filter_level: str = "all",
         confidence_threshold: float = 0.7,
+        use_context_filter: bool = True,
+        use_baseline: bool = True,
     ) -> FilterResult:
         """应用三层过滤器"""
         current: Optional[FilterResult] = None
@@ -471,18 +475,18 @@ class MCPAuditServer:
             if current.is_false_positive and current.confidence >= confidence_threshold:
                 return current
 
-        if filter_level in ("L2", "all"):
+        if filter_level in ("L2", "all") and use_context_filter:
             l2 = await self.context_filter.filter(scan_result)
             if l2.is_false_positive and l2.confidence >= confidence_threshold:
                 return l2
             if current is None or l2.confidence > current.confidence:
                 current = l2
 
-        if filter_level in ("L3", "all"):
+        if filter_level in ("L3", "all") and use_baseline:
             l3 = await self.ml_filter.filter(scan_result)
             if l3.is_false_positive and l3.confidence >= confidence_threshold:
                 return l3
-            if current is None:
+            if current is None or l3.confidence > current.confidence:
                 current = l3
 
         if current is None:

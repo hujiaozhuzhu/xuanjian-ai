@@ -13,7 +13,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -60,6 +60,7 @@ class FPServer:
         self.scanner_manager = ScannerManager(self._config_data.get("scanners", {}))
 
         # 运行时存储
+        # TODO: 数据库层集成 - 将以下内存字典替换为 database.repositories 中的持久化实现
         self._scans: Dict[str, Dict[str, Any]] = {}          # scan_id -> scan info
         self._findings: Dict[str, FilterResult] = {}          # finding_id -> FilterResult
         self._projects: Dict[str, Project] = {}               # project_id -> Project
@@ -111,7 +112,7 @@ class FPServer:
             l3_result = await self.ml_filter.filter(scan_result)
             if l3_result.is_false_positive and l3_result.confidence >= confidence_threshold:
                 return l3_result
-            if current is None:
+            if current is None or l3_result.confidence > current.confidence:
                 current = l3_result
 
         if current is None:
@@ -181,7 +182,7 @@ class FPServer:
             "project_path": project_path,
             "language": language,
             "status": "running",
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
             "progress": 0,
             "findings": [],
         }
@@ -213,7 +214,7 @@ class FPServer:
 
             self._scans[scan_id].update({
                 "status": "completed",
-                "completed_at": datetime.utcnow().isoformat(),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
                 "total_findings": len(raw_results),
                 "stats": stats.model_dump(),
                 "findings": [fr.id for fr in filtered],
@@ -416,33 +417,20 @@ class FPServer:
 # ─────────────────────── FastAPI 应用 ───────────────────────
 
 def create_app(server: Optional[FPServer] = None) -> "FastAPI":
-    """创建 FastAPI 应用"""
+    """创建 FastAPI 应用（集成 Web 仪表板）"""
     from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
     from fastapi.staticfiles import StaticFiles
-    from fastapi.templating import Jinja2Templates
     from fastapi.responses import HTMLResponse, JSONResponse
     from pydantic import BaseModel as PydanticBaseModel
 
     if server is None:
         server = FPServer()
 
-    app = FastAPI(
-        title="玄鉴 (XuanJian) 代码审计误报排查",
-        description="面向安全研究团队的开源代码审计误报排查 MCP 工具",
-        version="0.1.0",
-    )
+    # 使用新的 Web 仪表板应用（包含 /api/v1/ 路由 + Vue3 SPA）
+    from .web.app import create_web_app
+    app = create_web_app(server=server)
 
-    # 静态文件 & 模板
-    web_dir = Path(__file__).parent / "web"
-    static_dir = web_dir / "static"
-    template_dir = web_dir / "templates"
-
-    if static_dir.exists():
-        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
-
-    templates = Jinja2Templates(directory=str(template_dir)) if template_dir.exists() else None
-
-    # ─────── Pydantic 请求模型 ───────
+    # ─────── 向后兼容的旧 API 路由（/api/ 前缀）───────
 
     class ScanRequest(PydanticBaseModel):
         project_path: str
@@ -452,20 +440,6 @@ def create_app(server: Optional[FPServer] = None) -> "FastAPI":
     class MarkFPRequest(PydanticBaseModel):
         reason: str
         scope: str = "instance"
-
-    # ─────── 页面路由 ───────
-
-    @app.get("/", response_class=HTMLResponse)
-    async def index(request: Request):
-        if templates:
-            return templates.TemplateResponse("index.html", {
-                "request": request,
-                "title": "玄鉴 - 代码审计误报排查",
-                "version": "0.1.0",
-            })
-        return HTMLResponse(_inline_dashboard_html())
-
-    # ─────── API 路由 ───────
 
     @app.get("/api/projects")
     async def api_projects():
@@ -513,26 +487,6 @@ def create_app(server: Optional[FPServer] = None) -> "FastAPI":
         if scan is None:
             raise HTTPException(status_code=404, detail="Scan not found")
         return scan
-
-    # ─────── WebSocket ───────
-
-    @app.websocket("/ws/scan/{scan_id}")
-    async def ws_scan(websocket: WebSocket, scan_id: str):
-        await websocket.accept()
-        server.register_ws(scan_id, websocket)
-        try:
-            while True:
-                data = await websocket.receive_text()
-                # 心跳
-                if data == "ping":
-                    await websocket.send_json({"type": "pong"})
-        except WebSocketDisconnect:
-            pass
-        finally:
-            server.unregister_ws(scan_id, websocket)
-
-    # 把 server 存到 app 上方便外部访问
-    app.state.fp_server = server
 
     return app
 
@@ -654,6 +608,11 @@ button:disabled{opacity:.4;cursor:not-allowed}
 const API = '';
 let currentScanId = null;
 
+function escapeHtml(str) {
+  if (typeof str !== 'string') return str;
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
 async function loadStats() {
   try {
     const r = await fetch(API + '/api/stats');
@@ -702,19 +661,23 @@ async function loadFindings() {
     tbody.innerHTML = '';
     data.forEach(f => {
       const o = f.original;
-      const sevBadge = `<span class="badge badge-${o.severity.toLowerCase()}">${o.severity}</span>`;
+      const sevBadge = `<span class="badge badge-${escapeHtml(o.severity.toLowerCase())}">${escapeHtml(o.severity)}</span>`;
       const vp = f.verdict === 'false_positive' ? 'fp' : f.verdict === 'likely_false_positive' ? 'lfp' : f.verdict === 'true_positive' ? 'tp' : 'review';
       const vl = {false_positive:'误报',likely_false_positive:'疑似误报',true_positive:'真实问题',needs_review:'待复核'}[f.verdict] || f.verdict;
-      const vBadge = `<span class="badge badge-${vp}">${vl}</span>`;
-      tbody.innerHTML += `<tr>
-        <td>${sevBadge}</td>
-        <td>${o.rule_id}</td>
-        <td><code>${o.file}:${o.line}</code></td>
-        <td>${o.line}</td>
+      const vBadge = `<span class="badge badge-${escapeHtml(vp)}">${escapeHtml(vl)}</span>`;
+      const row = document.createElement('tr');
+      row.innerHTML = `<td>${sevBadge}</td>
+        <td></td>
+        <td><code></code></td>
+        <td></td>
         <td>${vBadge}</td>
         <td>${(f.confidence*100).toFixed(0)}%</td>
-        <td><button onclick="markFP('${f.id}')" style="padding:4px 10px;font-size:12px">标记误报</button></td>
-      </tr>`;
+        <td><button style="padding:4px 10px;font-size:12px">标记误报</button></td>`;
+      row.children[1].textContent = o.rule_id;
+      row.children[2].querySelector('code').textContent = o.file + ':' + o.line;
+      row.children[3].textContent = o.line;
+      row.querySelector('button').addEventListener('click', () => markFP(f.id));
+      tbody.appendChild(row);
     });
   } catch(e) {}
 }
@@ -745,7 +708,14 @@ FPSentinelServer = FPServer
 
 async def run_server(host: str = "0.0.0.0", port: int = 8080, **kwargs):
     """启动 Web 服务器"""
+    import os
     import uvicorn
+
+    # 安全加固：未设置 API Key 时仅绑定 localhost
+    if not os.environ.get("XUANJIAN_API_KEY"):
+        host = "127.0.0.1"
+        logger.info("XUANJIAN_API_KEY 未设置，仅绑定 localhost (127.0.0.1)")
+
     app = create_app()
     config = uvicorn.Config(app, host=host, port=port, log_level="info")
     srv = uvicorn.Server(config)

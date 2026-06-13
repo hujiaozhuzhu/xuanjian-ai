@@ -12,6 +12,8 @@ import hashlib
 import re
 from typing import List, Optional, Dict, Any
 from ..models import ScanResult, FilterResult, FilterReason, Verdict, ScanTool
+from ..rules.java.rules import JAVA_FALSE_POSITIVE_RULES
+from ..utils.fingerprint import compute_fingerprint
 
 
 class RuleFilter:
@@ -59,8 +61,9 @@ class RuleFilter:
         self._path_patterns = [re.compile(p) for p in self.path_whitelist]
         self._code_patterns = [re.compile(p, re.IGNORECASE) for p in self.code_ignore_patterns]
 
-        # 自定义规则
+        # 自定义规则（用户配置 + Java 内置误报规则）
         self.custom_rules = self.config.get("custom_rules", [])
+        self.custom_rules = self.custom_rules + list(JAVA_FALSE_POSITIVE_RULES)
 
         # 历史误报指纹库
         self.false_positive_fingerprints = set(
@@ -96,7 +99,7 @@ class RuleFilter:
                 0.85,
             )
 
-        # 检查自定义规则
+        # 检查自定义规则（包含 Java 内置规则）
         custom_reason = self._check_custom_rules(scan_result)
         if custom_reason:
             return self._mark_false_positive(scan_result, custom_reason, 0.8)
@@ -128,7 +131,7 @@ class RuleFilter:
         return None
 
     def _check_custom_rules(self, scan_result: ScanResult) -> Optional[FilterReason]:
-        """检查自定义规则"""
+        """检查自定义规则（含 Java 内置规则）"""
         for rule in self.custom_rules:
             if self._match_custom_rule(scan_result, rule):
                 return FilterReason(
@@ -141,12 +144,17 @@ class RuleFilter:
 
     def _match_custom_rule(self, scan_result: ScanResult, rule: Dict[str, Any]) -> bool:
         """匹配自定义规则"""
-        # 匹配规则ID
+        # 匹配规则ID（精确匹配）
         if "rule_id" in rule:
             if isinstance(rule["rule_id"], list):
                 if scan_result.rule_id not in rule["rule_id"]:
                     return False
             elif scan_result.rule_id != rule["rule_id"]:
+                return False
+
+        # 匹配规则ID模式（正则匹配）
+        if "rule_id_pattern" in rule:
+            if not re.search(rule["rule_id_pattern"], scan_result.rule_id, re.IGNORECASE):
                 return False
 
         # 匹配文件模式
@@ -179,14 +187,13 @@ class RuleFilter:
         return True
 
     def _compute_fingerprint(self, scan_result: ScanResult) -> str:
-        """计算结果指纹"""
-        # 标准化代码片段
-        normalized_code = re.sub(r'\s+', ' ', scan_result.code.strip())
-        # 只取前100字符
-        normalized_code = normalized_code[:100]
-
-        raw = f"{scan_result.tool}:{scan_result.rule_id}:{scan_result.file}:{normalized_code}"
-        return hashlib.md5(raw.encode()).hexdigest()
+        """计算结果指纹（使用统一指纹工具）"""
+        return compute_fingerprint(
+            tool=scan_result.tool.value,
+            rule_id=scan_result.rule_id,
+            file=scan_result.file,
+            code=scan_result.code,
+        )
 
     def _mark_false_positive(
         self, scan_result: ScanResult, reason: FilterReason, confidence: float

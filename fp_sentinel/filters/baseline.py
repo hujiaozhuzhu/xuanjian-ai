@@ -7,13 +7,13 @@ L3: 历史基线过滤器
 - 基线管理（增/删/查）
 """
 
-import hashlib
 import json
 import logging
 import re
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Set, Tuple
 from ..models import ScanResult, FilterResult, FilterReason, Verdict
+from ..utils.fingerprint import compute_fingerprint
 
 
 logger = logging.getLogger(__name__)
@@ -116,15 +116,23 @@ class BaselineFilter:
         return self._pass_through(scan_result)
 
     def _compute_fingerprint(self, scan_result: ScanResult) -> str:
-        """计算精确指纹（同项目 + 同规则 + 同路径 + 同行号）"""
-        normalized_code = re.sub(r"\s+", " ", scan_result.code.strip())[:100]
-        raw = f"{scan_result.rule_id}:{scan_result.file}:{scan_result.line}:{normalized_code}"
-        return hashlib.md5(raw.encode()).hexdigest()
+        """计算精确指纹（含行号，用于精确匹配）"""
+        return compute_fingerprint(
+            tool=scan_result.tool.value,
+            rule_id=scan_result.rule_id,
+            file=scan_result.file,
+            code=scan_result.code,
+            line=scan_result.line,
+        )
 
     def _compute_path_fingerprint(self, scan_result: ScanResult) -> str:
-        """计算路径级指纹（同规则 + 同路径，忽略行号）"""
-        raw = f"{scan_result.rule_id}:{scan_result.file}"
-        return hashlib.md5(raw.encode()).hexdigest()
+        """计算路径级指纹（统一格式，忽略行号）"""
+        return compute_fingerprint(
+            tool=scan_result.tool.value,
+            rule_id=scan_result.rule_id,
+            file=scan_result.file,
+            code=scan_result.code,
+        )
 
     def _fuzzy_match(self, scan_result: ScanResult) -> Tuple[bool, float]:
         """模糊匹配：同规则 + 同路径 + 代码相似度"""

@@ -7,7 +7,7 @@
 import json
 import uuid
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import aiosqlite
@@ -52,7 +52,7 @@ class ProjectRepo:
     ) -> Project:
         """创建项目"""
         project_id = _generate_id()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.conn.execute(
             """INSERT INTO projects (id, name, path, language, description, created_at, updated_at)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
@@ -99,7 +99,7 @@ class ProjectRepo:
         fields = {k: v for k, v in kwargs.items() if k in allowed}
         if not fields:
             return False
-        fields["updated_at"] = datetime.utcnow().isoformat()
+        fields["updated_at"] = datetime.now(timezone.utc).isoformat()
         set_clause = ", ".join(f"{k} = ?" for k in fields)
         values = list(fields.values()) + [project_id]
         await self.db.conn.execute(
@@ -163,7 +163,7 @@ class FindingRepo:
                 finding.category, finding.language,
                 finding.fingerprint, finding.cwe, finding.owasp,
                 finding.confidence, metadata_json,
-                (finding.created_at or datetime.utcnow()).isoformat(),
+                (finding.created_at or datetime.now(timezone.utc)).isoformat(),
             ),
         )
         await self.db.conn.commit()
@@ -187,7 +187,7 @@ class FindingRepo:
                 f.category, f.language,
                 f.fingerprint, f.cwe, f.owasp,
                 f.confidence, metadata_json,
-                (f.created_at or datetime.utcnow()).isoformat(),
+                (f.created_at or datetime.now(timezone.utc)).isoformat(),
             ))
 
         await self.db.conn.executemany(
@@ -232,8 +232,10 @@ class FindingRepo:
             clauses.append("severity = ?")
             params.append(severity)
         if file_path:
-            clauses.append("file_path LIKE ?")
-            params.append(f"%{file_path}%")
+            # 转义 SQL LIKE 通配符以防注入
+            escaped_path = file_path.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+            clauses.append("file_path LIKE ? ESCAPE '\\'")
+            params.append(f"%{escaped_path}%")
         if language:
             clauses.append("language = ?")
             params.append(language)
@@ -338,7 +340,7 @@ class FPMarkRepo:
         return FalsePositiveMark(
             id=mark_id, finding_id=finding_id, reason=reason,
             marked_by=marked_by, scope=scope, confidence=confidence,
-            created_at=datetime.utcnow(),
+            created_at=datetime.now(timezone.utc),
         )
 
     async def get_by_finding_id(self, finding_id: str) -> List[FalsePositiveMark]:
@@ -422,7 +424,7 @@ class ScanHistoryRepo:
     ) -> ScanHistory:
         """记录一次扫描"""
         scan_id = _generate_id()
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         await self.db.conn.execute(
             """INSERT INTO scan_history
                (scan_id, project_id, project_path, scanner, language,
