@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fp-sentinel"
+version = "0.1.0"
+description = "玄鉴 XuanJian AI - 代码审计误报排查 MCP Skill"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "XuanJian AI"},
+]
+keywords = ["code-audit", "security", "false-positive", "mcp", "java", "python"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+
+dependencies = [
+    "mcp>=1.0.0",
+    "pydantic>=2.0.0",
+    "typer>=0.9.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+scanners = [
+    "semgrep>=1.0.0",
+]
+ml = [
+    "scikit-learn>=1.3.0",
+    "onnxruntime>=1.15.0",
+    "numpy>=1.24.0",
+]
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+all = [
+    "fp-sentinel[scanners,ml,web,dev]",
+]
+
+[project.scripts]
+fp-sentinel = "fp_sentinel.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["fp_sentinel*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

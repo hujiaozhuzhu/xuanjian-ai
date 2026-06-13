@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ title }}</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="header">
+  <div>
+    <h1>🔍 玄鉴 XuanJian</h1>
+    <span class="version">v{{ version }} - 代码审计误报排查 MCP 工具</span>
+  </div>
+  <div class="header-actions">
+    <span class="status-dot" id="status-dot"></span>
+    <span id="connection-status">就绪</span>
+  </div>
+</div>
+
+<div class="container">
+  <!-- 统计卡片 -->
+  <div class="stats-grid" id="stats-grid">
+    <div class="stat-card">
+      <div class="value" id="s-total">-</div>
+      <div class="label">总发现</div>
+    </div>
+    <div class="stat-card">
+      <div class="value fp" id="s-fp">-</div>
+      <div class="label">误报</div>
+    </div>
+    <div class="stat-card">
+      <div class="value lfp" id="s-lfp">-</div>
+      <div class="label">疑似误报</div>
+    </div>
+    <div class="stat-card">
+      <div class="value tp" id="s-tp">-</div>
+      <div class="label">真实问题</div>
+    </div>
+    <div class="stat-card">
+      <div class="value review" id="s-review">-</div>
+      <div class="label">待复核</div>
+    </div>
+    <div class="stat-card">
+      <div class="value rate" id="s-rate">-</div>
+      <div class="label">减少率</div>
+    </div>
+  </div>
+
+  <!-- 扫描面板 -->
+  <div class="panel">
+    <h2>🚀 启动扫描</h2>
+    <div class="form-row">
+      <label for="project-path">项目路径</label>
+      <input type="text" id="project-path" placeholder="/path/to/your/project">
+    </div>
+    <div class="form-row">
+      <label for="language">语言</label>
+      <select id="language">
+        <option value="auto">自动检测</option>
+        <option value="java">Java</option>
+        <option value="python">Python</option>
+        <option value="go">Go</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>扫描器</label>
+      <div class="checkbox-group">
+        <label><input type="checkbox" value="semgrep" checked> Semgrep</label>
+        <label><input type="checkbox" value="bandit"> Bandit</label>
+        <label><input type="checkbox" value="findsecbugs"> FindSecBugs</label>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button id="btn-scan" onclick="startScan()">开始扫描</button>
+      <button id="btn-export" onclick="exportReport()" class="secondary" disabled>导出报告</button>
+    </div>
+    <div id="scan-status"></div>
+    <div class="progress-bar" id="progress-bar" style="display:none">
+      <div class="progress-fill" id="progress-fill"></div>
+    </div>
+  </div>
+
+  <!-- 过滤面板 -->
+  <div class="panel">
+    <h2>🔍 过滤器设置</h2>
+    <div class="filter-toggles">
+      <label class="toggle-label">
+        <input type="checkbox" id="use-rule-filter" checked>
+        <span>L1 规则过滤</span>
+        <span class="toggle-desc">路径白名单、代码忽略标记</span>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="use-context-filter" checked>
+        <span>L2 上下文分析</span>
+        <span class="toggle-desc">死代码检测、安全守卫识别</span>
+      </label>
+      <label class="toggle-label">
+        <input type="checkbox" id="use-baseline" checked>
+        <span>L3 历史基线</span>
+        <span class="toggle-desc">指纹匹配、历史误报库</span>
+      </label>
+    </div>
+  </div>
+
+  <!-- 发现列表 -->
+  <div class="panel">
+    <h2>📋 发现列表</h2>
+    <div class="filter-bar">
+      <select id="filter-verdict" onchange="loadFindings()">
+        <option value="">全部判定</option>
+        <option value="false_positive">误报</option>
+        <option value="likely_false_positive">疑似误报</option>
+        <option value="true_positive">真实问题</option>
+        <option value="needs_review">待复核</option>
+      </select>
+      <select id="filter-severity" onchange="loadFindings()">
+        <option value="">全部严重程度</option>
+        <option value="CRITICAL">CRITICAL</option>
+        <option value="HIGH">HIGH</option>
+        <option value="MEDIUM">MEDIUM</option>
+        <option value="LOW">LOW</option>
+        <option value="INFO">INFO</option>
+      </select>
+      <span class="result-count" id="result-count"></span>
+    </div>
+    <div id="findings-list">
+      <table class="findings-table">
+        <thead>
+          <tr>
+            <th>严重程度</th>
+            <th>规则</th>
+            <th>文件</th>
+            <th>行</th>
+            <th>判定</th>
+            <th>置信度</th>
+            <th>风险评分</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="findings-tbody">
+          <tr><td colspan="8" class="empty-state">暂无数据，请先执行扫描</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- 发现详情模态 -->
+  <div class="modal-overlay" id="modal-overlay" style="display:none" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-header">
+        <h3 id="modal-title">发现详情</h3>
+        <button class="close-btn" onclick="closeModal()">✕</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
