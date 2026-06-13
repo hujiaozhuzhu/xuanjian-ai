@@ -1,0 +1,80 @@
+{
+  "rule_filter": {
+    "enabled": true,
+    "global_whitelist": [
+      {
+        "file_pattern": "*/test/*",
+        "reason": "测试代码中的模拟调用",
+        "confidence": 0.9
+      },
+      {
+        "file_pattern": "*_test.py",
+        "reason": "Python测试文件",
+        "confidence": 0.8
+      },
+      {
+        "code_pattern": "mock\\.execute",
+        "reason": "模拟数据库执行",
+        "confidence": 0.85
+      }
+    ],
+    "global_blacklist": [
+      {
+        "file_pattern": "*/production/*",
+        "reason": "生产环境代码需要严格检查",
+        "confidence": 0.9
+      }
+    ],
+    "rule_whitelist": {
+      "python.lang.security.injection.sql-injection": [
+        {
+          "file_pattern": "*/migrations/*",
+          "reason": "数据库迁移文件",
+          "confidence": 0.7
+        }
+      ]
+    }
+  },
+  "context_filter": {
+    "enabled": true,
+    "security_guard_keywords": [
+      "sanitize", "escape", "validate", "verify", "check",
+      "clean", "purify", "encode", "decode", "hash",
+      "encrypt", "decrypt", "sign", "verify", "authorize",
+      "authenticate", "permission", "role", "access",
+      "parameterized", "prepared", "query"
+    ],
+    "input_validation_keywords": [
+      "isinstance", "type", "len", "range", "min", "max",
+      "assert", "raise", "ValueError", "TypeError", "invalid",
+      "format", "strip", "lstrip", "rstrip", "replace",
+      "re.match", "re.search", "re.fullmatch"
+    ],
+    "dead_code_patterns": [
+      "if\\s+False\\s*:",
+      "if\\s+0\\s*:",
+      "#.*TODO.*remove",
+      "#.*FIXME.*dead",
+      "pass\\s*$",
+      "\\.\\.\\.\\s*$"
+    ],
+    "false_positive_threshold": 0.5
+  },
+  "ml_filter": {
+    "enabled": true,
+    "model_path": "models/false_positive_model.pkl",
+    "onnx_model_path": "models/false_positive_model.onnx",
+    "confidence_threshold": 0.7,
+    "feature_columns": [
+      "rule_confidence",
+      "severity_score",
+      "code_complexity",
+      "data_flow_length",
+      "has_security_guards",
+      "has_input_validation",
+      "is_test_code",
+      "file_depth",
+      "line_count"
+    ]
+  }
+}
