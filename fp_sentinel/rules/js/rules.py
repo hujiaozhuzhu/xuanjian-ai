@@ -245,7 +245,7 @@ CRYPTO_RULES = [
         description="DES/3DES 算法不安全",
         severity="MEDIUM",
         confidence=0.75,
-        code_pattern=r"(des|DES|tripleDES|3des)\s*\(",
+        code_pattern=r"\b(?:des|DES|tripleDES|3des)\s*\(",
         category="CRYPTO",
         cwe="CWE-327",
         owasp="A02:2021 - Cryptographic Failures",
@@ -392,33 +392,39 @@ NODEJS_RULES = [
         description="child_process 命令注入",
         severity="CRITICAL",
         confidence=0.8,
-        code_pattern=r"(exec|execSync|spawn|spawnSync|execFile)\s*\(\s*[^)]*\+",
+        # 覆盖两种形态：变量直接传递 exec(cmd, ...) / 字符串拼接 exec("ls " + input)
+        code_pattern=r"(?:exec|execSync|spawn|spawnSync|execFile)\s*\(\s*(?:[A-Za-z_$][\w$]*\s*[,)]|[^)]*\+)",
         category="INJECTION",
         cwe="CWE-78",
         owasp="A03:2021 - Injection",
         file_pattern="*.js",
+        false_positive_indicators=["allowed", "whitelist", "allowlist", "includes(", "validate", "execFile"],
     ),
     CustomRule(
         rule_id="js.node.path-traversal",
         description="文件路径拼接可能导致路径穿越",
         severity="HIGH",
         confidence=0.65,
-        code_pattern=r"(readFile|readFileSync|createReadStream|createWriteStream)\s*\(\s*[^)]*\+",
+        # 覆盖两种形态：path.join(..., filename) 变量传递 / readFile(+input) 拼接
+        code_pattern=r"path\.join\s*\([^)]*\b(?:file|filename|pathname|userPath)\b|readFile(?:Sync)?\s*\(\s*[^)]*\+",
         category="PATH_TRAVERSAL",
         cwe="CWE-22",
         owasp="A01:2021 - Broken Access Control",
         file_pattern="*.js",
+        false_positive_indicators=["path.resolve", "path.normalize", "startsWith", "realpath"],
     ),
     CustomRule(
         rule_id="js.node.sql-injection",
         description="SQL 拼接可能导致 SQL 注入",
         severity="CRITICAL",
         confidence=0.75,
-        code_pattern=r"(query|execute|run)\s*\(\s*['\"`].*\$\{|.*\+\s*(req\.|params|body|query)",
+        # 覆盖两种形态：SQL 字面量拼接变量 / query(`...${input}...`) 模板字符串
+        code_pattern=r"['\"`]\s*(?:SELECT|INSERT|UPDATE|DELETE|DROP)\b[^'\"`]*['\"`]\s*\+|(?:query|execute|run)\s*\(\s*['\"`][^'\"`]*\$\{",
         category="SQL_INJECTION",
         cwe="CWE-89",
         owasp="A03:2021 - Injection",
         file_pattern="*.js",
+        false_positive_indicators=["?", "$1", "%s", "values(", "parameterized"],
     ),
     CustomRule(
         rule_id="js.node.nosql-injection",
@@ -436,11 +442,13 @@ NODEJS_RULES = [
         description="服务端请求伪造 (SSRF)",
         severity="HIGH",
         confidence=0.55,
-        code_pattern=r"(axios|fetch|request|got|http\.get|https\.get)\s*\(\s*(req\.|params|body|query|url)",
+        # 覆盖 axios.get(url)/fetch(url) 等变量传递形态
+        code_pattern=r"(?:axios(?:\.(?:get|post|put|delete|request))?|fetch|got|https?\.get)\s*\(\s*(?:url\b|req\.|userUrl|target|params\.|body\.|query\.)",
         category="SSRF",
         cwe="CWE-918",
         owasp="A10:2021 - Server-Side Request Forgery",
         file_pattern="*.js",
+        false_positive_indicators=["allowed", "whitelist", "allowlist", "startsWith", "URL.canParse", "validateURL"],
     ),
     CustomRule(
         rule_id="js.node.open-redirect",
@@ -451,6 +459,18 @@ NODEJS_RULES = [
         category="UNSAFE",
         cwe="CWE-601",
         owasp="A01:2021 - Broken Access Control",
+    ),
+    CustomRule(
+        rule_id="js.node.jwt-weak",
+        description="JWT 使用弱密钥/硬编码短密钥签名",
+        severity="HIGH",
+        confidence=0.75,
+        code_pattern=r"jwt\.sign\s*\([^,]+,\s*(?:JWT_SECRET|jwtSecret|['\"][^'\"]{1,16}['\"])",
+        category="AUTH",
+        cwe="CWE-347",
+        owasp="A07:2021 - Identification and Authentication Failures",
+        file_pattern="*.js",
+        false_positive_indicators=["process.env", "randomBytes"],
     ),
 ]
 
@@ -571,7 +591,7 @@ AIGC_SECURITY_RULES = [
         description="LLM API Key 硬编码",
         severity="HIGH",
         confidence=0.7,
-        code_pattern=r"(?:OPENAI|ANTHROPIC|CLAUDE|GPT)[_-]?(?:API[_-]?KEY|SECRET)\s*[:=]\s*['\"][sk-ant-][^'\"]+['\"]",
+        code_pattern=r"(?:OPENAI|ANTHROPIC|CLAUDE|GPT)[_-]?(?:API[_-]?KEY|SECRET)\s*[:=]\s*['\"](?:sk-ant-|sk-)[^'\"]+['\"]",
         category="AIGC",
         cwe="CWE-798",
         owasp="A07:2021 - Identification and Authentication Failures",
@@ -750,13 +770,35 @@ JS_SECURITY_GUARD_PATTERNS: Dict[str, List[str]] = {
         r"spawn\s*\(",            # spawn 使用数组参数
         r"child_process\.fork",
         r"shell:\s*false",
+        r"\ballowed\b",           # 白名单词（v2.1.0 A3）
+        r"\bwhitelist\b",
+        r"\ballowlist\b",
+        r"includes\s*\(",
+        r"validate\s*\(",
     ],
     "path_traversal": [
         r"path\.resolve\s*\(",
         r"path\.normalize\s*\(",
-        r"__dirname",
-        r"__filename",
+        r"startsWith\s*\(",       # 前缀校验（v2.1.0 A3）
+        r"realpath\s*\(",
         r"getCanonicalPath",
+        # 注意：__dirname/__filename 不作为窗口 guard —— 它们常出现在
+        # 漏洞行本身（path.join(__dirname, ...)），会造成窗口内自抑制
+    ],
+    "ssrf": [                     # v2.1.0 A3 新增
+        r"\ballowed\b",
+        r"\bwhitelist\b",
+        r"\ballowlist\b",
+        r"startsWith\s*\(",
+        r"URL\.canParse",
+        r"validateURL",
+    ],
+    "sql_injection": [            # v2.1.0 A3 新增：参数化查询特征
+        r"\$\d\b",
+        r"%s",
+        r"values\s*\(",
+        r"\?\s*[,\)\]`\"']",
+        r"parameteriz",
     ],
 }
 

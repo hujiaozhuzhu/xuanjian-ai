@@ -55,6 +55,15 @@ class ScannerManager:
         except ImportError:
             logger.debug("JS Scanner not available")
 
+        # Python Scanner (Python 规则正则扫描)
+        try:
+            from .python_scanner import PythonScanner
+            py_config = scanner_configs.get("python_scanner", {"enabled": True})
+            if py_config.get("enabled", True):
+                self.scanners[ScanTool.PY_SCANNER] = PythonScanner(py_config)
+        except ImportError:
+            logger.debug("Python Scanner not available")
+
     async def scan(
         self,
         target_path: str,
@@ -161,7 +170,10 @@ class ScannerManager:
         if language == "java":
             return [ScanTool.SEMGREP, ScanTool.FINDSECBUGS]
         elif language == "python":
-            return [ScanTool.SEMGREP, ScanTool.BANDIT]
+            tools = [ScanTool.SEMGREP, ScanTool.BANDIT]
+            if ScanTool.PY_SCANNER in self.scanners:
+                tools.append(ScanTool.PY_SCANNER)
+            return tools
         elif language in ("javascript", "typescript"):
             tools = [ScanTool.SEMGREP]
             if ScanTool.JS_SCANNER in self.scanners:

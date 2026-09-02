@@ -17,12 +17,19 @@ try:
 except ImportError:
     JSScanner = None
 
+# Python 扫描器（可选）
+try:
+    from .python_scanner import PythonScanner
+except ImportError:
+    PythonScanner = None
+
 __all__ = [
     "BaseScanner",
     "SemgrepScanner",
     "BanditScanner",
     "FindSecBugsScanner",
     "JSScanner",
+    "PythonScanner",
     "ScannerManager",
     "ResultNormalizer",
 ]

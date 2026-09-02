@@ -18,9 +18,26 @@ from typing import List, Dict, Any, Optional
 
 from .base import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
-from ..rules.js import JS_SECURITY_RULES, JS_RULES_INDEX
+from ..rules.js import JS_SECURITY_RULES, JS_RULES_INDEX, JS_SECURITY_GUARD_PATTERNS
 
 logger = logging.getLogger(__name__)
+
+# 规则 compile 缓存（进程级，pattern -> 已编译对象；编译失败缓存 None）
+_RULE_COMPILE_CACHE: Dict[str, Optional["re.Pattern"]] = {}
+# guard 模式 compile 缓存
+_GUARD_COMPILE_CACHE: Dict[str, Optional["re.Pattern"]] = {}
+
+# guard 上下文窗口半径（命中行前后各 6 行）
+GUARD_WINDOW = 6
+
+# rule.category -> JS_SECURITY_GUARD_PATTERNS guard 组映射（v2.1.0 A3）
+CATEGORY_GUARD_GROUPS = {
+    "INJECTION": ["command_injection"],
+    "PATH_TRAVERSAL": ["path_traversal"],
+    "SSRF": ["ssrf"],
+    "SQL_INJECTION": ["sql_injection"],
+    # 其余 category（XSS/AIGC/SECRETS 等）维持行内 false_positive_indicators 机制
+}
 
 # JS/TS 文件扩展名
 JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
@@ -116,7 +133,11 @@ class JSScanner(BaseScanner):
         return files
 
     async def _scan_with_rules(self, files: List[Path]) -> List[ScanResult]:
-        """使用自定义规则扫描文件"""
+        """使用自定义规则扫描文件
+
+        容错策略（v2.1.0 A2）：单条规则 compile/匹配异常仅跳过该规则自身，
+        不中断同文件剩余规则。
+        """
         results = []
 
         for file_path in files:
@@ -127,21 +148,34 @@ class JSScanner(BaseScanner):
 
                 lines = content.split("\n")
                 for rule in JS_SECURITY_RULES:
-                    # 文件模式匹配
-                    if rule.file_pattern and not self._match_file_pattern(
-                        str(file_path), rule.file_pattern
-                    ):
-                        continue
+                    try:
+                        # 文件模式匹配
+                        if rule.file_pattern and not self._match_file_pattern(
+                            str(file_path), rule.file_pattern
+                        ):
+                            continue
 
-                    # 代码模式匹配
-                    if rule.code_pattern:
-                        pattern = re.compile(rule.code_pattern, re.IGNORECASE)
-                        for line_num, line in enumerate(lines, 1):
-                            if pattern.search(line):
-                                # 检查误报指标
+                        # 代码模式匹配（compile 走缓存，坏正则返回 None 跳过）
+                        if rule.code_pattern:
+                            pattern = self._compile_rule_pattern(rule.code_pattern)
+                            if pattern is None:
+                                continue
+                            for line_num, line in enumerate(lines, 1):
+                                if not pattern.search(line):
+                                    continue
+                                # 行内误报指标
                                 if self._check_false_positive_indicators(
                                     line, rule.false_positive_indicators
                                 ):
+                                    continue
+                                # 上下文窗口 guard（v2.1.0 A3）
+                                if self._suppressed_by_guard(
+                                    lines, line_num - 1, rule.category
+                                ):
+                                    logger.debug(
+                                        f"Finding suppressed by guard: rule={rule.rule_id} "
+                                        f"file={file_path} line={line_num}"
+                                    )
                                     continue
 
                                 results.append(ScanResult(
@@ -160,10 +194,63 @@ class JSScanner(BaseScanner):
                                         "scanner": "js_scanner",
                                     },
                                 ))
+                    except Exception as e:
+                        # per-rule 容错：坏规则只影响自身
+                        logger.warning(
+                            f"Rule {getattr(rule, 'rule_id', '?')} failed on "
+                            f"{file_path}, skipped: {e}"
+                        )
+                        continue
             except Exception as e:
                 logger.error(f"Error scanning {file_path}: {e}")
 
         return results
+
+    @staticmethod
+    def _compile_rule_pattern(pattern: str) -> Optional["re.Pattern"]:
+        """编译规则正则（带进程级缓存）；非法正则返回 None 并告警"""
+        if pattern not in _RULE_COMPILE_CACHE:
+            try:
+                _RULE_COMPILE_CACHE[pattern] = re.compile(pattern, re.IGNORECASE)
+            except re.error as e:
+                logger.warning(f"Invalid rule regex skipped: {e}: {pattern!r}")
+                _RULE_COMPILE_CACHE[pattern] = None
+        return _RULE_COMPILE_CACHE[pattern]
+
+    def _suppressed_by_guard(
+        self, lines: List[str], line_idx: int, category: Optional[str]
+    ) -> bool:
+        """上下文窗口 guard（v2.1.0 A3）
+
+        取命中行前后 GUARD_WINDOW 行窗口文本，按 rule.category 映射到
+        JS_SECURITY_GUARD_PATTERNS 对应 guard 组；窗口内命中任一 guard
+        模式则认为该处已有防护，抑制报告。
+        """
+        if not category:
+            return False
+        guard_sources = [
+            src
+            for group in CATEGORY_GUARD_GROUPS.get(category, [])
+            for src in JS_SECURITY_GUARD_PATTERNS.get(group, [])
+        ]
+        if not guard_sources:
+            return False
+
+        start = max(0, line_idx - GUARD_WINDOW)
+        end = min(len(lines), line_idx + GUARD_WINDOW + 1)
+        window_text = "\n".join(lines[start:end])
+
+        for src in guard_sources:
+            if src not in _GUARD_COMPILE_CACHE:
+                try:
+                    _GUARD_COMPILE_CACHE[src] = re.compile(src, re.IGNORECASE)
+                except re.error as e:
+                    logger.warning(f"Invalid guard pattern skipped: {e}: {src!r}")
+                    _GUARD_COMPILE_CACHE[src] = None
+            pattern = _GUARD_COMPILE_CACHE[src]
+            if pattern and pattern.search(window_text):
+                return True
+        return False
 
     async def _scan_secrets(self, files: List[Path]) -> List[ScanResult]:
         """扫描敏感信息"""

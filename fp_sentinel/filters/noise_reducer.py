@@ -100,10 +100,22 @@ class NoiseReducerL1:
         r'eval\s*\(\s*\d+',                          # eval(123)
     ]
 
+    # 确定性高危规则：不允许被白名单/安全函数等降噪条件压掉
+    DETERMINISTIC_RULES = {
+        "py.deserialization.yaml",
+        "py.deserialization.pickle",
+    }
+
     def filter(self, finding) -> FilterResult:
         """L1 过滤单条发现"""
         code = getattr(finding, 'code_snippet', '') or getattr(finding, 'code', '')
         file_path = getattr(finding, 'file_path', '') or getattr(finding, 'file', '')
+        rule_id = getattr(finding, 'rule_id', '')
+
+        # 0. 确定性高危检查：yaml.load 无 SafeLoader 是确定性 RCE 风险，直接放行
+        if rule_id == "py.deserialization.yaml":
+            if re.search(r"yaml\.load\s*\(", code) and "SafeLoader" not in code:
+                return FilterResult(True, "确定性高危放行", 1.0, "L1")
 
         # 1. 白名单注释检查
         if self._has_whitelist_comment(code):

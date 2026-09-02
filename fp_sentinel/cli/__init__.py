@@ -39,6 +39,25 @@ except ImportError:
     pass  # 未安装 aiohttp 时跳过
 console = Console()
 
+
+def _version_callback(value: bool) -> None:
+    if value:
+        console.print(f"玄鉴 (xuanjian-ai) fp_sentinel v{__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root_callback(
+    version: bool = typer.Option(
+        False, "--version", "-V",
+        callback=_version_callback,
+        is_eager=True,
+        help="显示版本号并退出",
+    ),
+):
+    """玄鉴 (xuanjian-ai) — 代码审计误报排查 MCP 工具"""
+
+
 # ─────────────────────── 辅助 ───────────────────────
 
 def _setup_logging(verbose: bool) -> None:
@@ -67,7 +86,7 @@ def scan(
     language: str = typer.Option("auto", "--lang", "-l", help="项目语言 (java/python/go/auto)"),
     scanners: Optional[str] = typer.Option(None, "--scanner", "-s", help="指定扫描器 (逗号分隔: semgrep,bandit,findsecbugs)"),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="YAML 配置文件路径"),
-    output_format: str = typer.Option("table", "--format", "-f", help="输出格式 (table/json)"),
+    output_format: str = typer.Option("table", "--format", "-f", help="输出格式 (table/json/sarif)"),
     save_to_db: bool = typer.Option(True, "--save/--no-save", help="是否保存到数据库"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
@@ -116,6 +135,8 @@ def scan(
         # 输出
         if output_format == "json":
             _output_json(findings)
+        elif output_format == "sarif":
+            _output_sarif(findings)
         else:
             _output_table(findings)
 
@@ -169,6 +190,14 @@ def _output_json(findings: List[Finding]) -> None:
     """JSON 输出"""
     data = [f.model_dump(mode="json") for f in findings]
     console.print_json(json.dumps(data, ensure_ascii=False, default=str))
+
+
+def _output_sarif(findings: List[Finding]) -> None:
+    """SARIF 2.1.0 输出"""
+    from ..reporting.sarif import to_sarif
+
+    sarif = to_sarif(findings)
+    console.print_json(json.dumps(sarif, ensure_ascii=False, default=str))
 
 
 def _truncate(s: str, max_len: int) -> str:

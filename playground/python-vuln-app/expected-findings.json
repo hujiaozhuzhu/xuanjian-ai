@@ -1,6 +1,6 @@
 {
   "description": "玄鉴 Python 靶场预期检出结果",
-  "total_vulnerabilities": 7,
+  "total_vulnerabilities": 8,
   "total_safe_patterns": 7,
   "findings": [
     {
@@ -60,7 +60,7 @@
     {
       "id": "vuln-007",
       "file": "app.py",
-      "line_approx": 128,
+      "line_approx": 141,
       "rule_id": "py.deserialization.yaml",
       "severity": "CRITICAL",
       "description": "yaml.load 不安全",
@@ -69,7 +69,7 @@
     {
       "id": "vuln-008",
       "file": "app.py",
-      "line_approx": 10,
+      "line_approx": 16,
       "rule_id": "py.crypto.hardcoded_key",
       "severity": "CRITICAL",
       "description": "硬编码密钥",
