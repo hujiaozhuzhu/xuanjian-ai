@@ -11,11 +11,18 @@ from .findsecbugs_scanner import FindSecBugsScanner
 from .manager import ScannerManager
 from .normalizer import ResultNormalizer
 
+# JS 扫描器（可选）
+try:
+    from .js_scanner import JSScanner
+except ImportError:
+    JSScanner = None
+
 __all__ = [
     "BaseScanner",
     "SemgrepScanner",
     "BanditScanner",
     "FindSecBugsScanner",
+    "JSScanner",
     "ScannerManager",
     "ResultNormalizer",
 ]

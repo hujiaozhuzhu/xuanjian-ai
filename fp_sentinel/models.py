@@ -29,6 +29,8 @@ class ScanTool(str, Enum):
     GOSEC = "gosec"
     FINDSECBUGS = "findsecbugs"
     SPOTBUGS = "spotbugs"
+    JS_SCANNER = "js_scanner"
+    ESLINT_SECURITY = "eslint_security"
     MANUAL = "manual"
 
 
@@ -47,6 +49,9 @@ class Language(str, Enum):
     GO = "go"
     JAVASCRIPT = "javascript"
     TYPESCRIPT = "typescript"
+    JSX = "jsx"
+    TSX = "tsx"
+    HTML = "html"
     AUTO = "auto"
 
 
@@ -110,6 +115,7 @@ class FilterResult(BaseModel):
     recommendation: str = Field(..., description="处理建议")
     context_analysis: Optional[Dict[str, Any]] = Field(None, description="上下文分析详情")
     java_analysis: Optional[Dict[str, Any]] = Field(None, description="Java特定分析详情")
+    js_analysis: Optional[Dict[str, Any]] = Field(None, description="JavaScript特定分析详情")
 
     @property
     def is_false_positive(self) -> bool:
@@ -207,11 +213,95 @@ class JavaAnalysisResult(BaseModel):
     confidence_adjustment: float = Field(default=0.0, description="置信度调整值")
 
 
+class JSAnalysisResult(BaseModel):
+    """JavaScript/TypeScript 特定分析结果"""
+    uses_textContent: bool = Field(default=False, description="是否使用安全赋值 textContent")
+    uses_innerHTML: bool = Field(default=False, description="是否使用危险赋值 innerHTML")
+    has_sanitize_guard: bool = Field(default=False, description="是否有安全守卫(DOMPurify等)")
+    has_csp_protection: bool = Field(default=False, description="是否有CSP策略保护")
+    is_framework_render: bool = Field(default=False, description="是否为框架模板渲染")
+    framework_type: Optional[str] = Field(None, description="框架类型(react/vue/angular/jquery)")
+    has_input_validation: bool = Field(default=False, description="是否有输入验证")
+    uses_eval: bool = Field(default=False, description="是否使用eval/Function等危险API")
+    uses_safe_api: bool = Field(default=False, description="是否使用安全API(JSON.parse等)")
+    data_flow_traced: bool = Field(default=False, description="数据流是否可追踪")
+    source_type: Optional[str] = Field(None, description="数据源类型(user_input/url/dom/api)")
+    sink_type: Optional[str] = Field(None, description="数据汇聚点类型(eval/innerHTML/fetch)")
+    is_test_file: bool = Field(default=False, description="是否为测试文件")
+    is_dead_code: bool = Field(default=False, description="是否为死代码")
+    confidence_adjustment: float = Field(default=0.0, description="置信度调整值")
+
+
+# ─────────────────────── 浏览器引擎模型 ───────────────────────
+
+class HookType(str, Enum):
+    """Hook 类型"""
+    BEFORE = "before"       # 函数调用前 Hook
+    AFTER = "after"         # 函数调用后 Hook
+    REPLACE = "replace"     # 替换函数
+    TRACE = "trace"         # 追踪函数调用
+
+
+class BrowserConfig(BaseModel):
+    """浏览器引擎配置"""
+    engine: str = Field(default="playwright", description="浏览器引擎(playwright)")
+    headless: bool = Field(default=True, description="是否无头模式")
+    browser_type: str = Field(default="chromium", description="浏览器类型(chromium)")
+    user_data_dir: Optional[str] = Field(None, description="用户数据目录")
+    proxy: Optional[str] = Field(None, description="代理设置")
+    timeout: int = Field(default=30000, description="超时时间(ms)")
+    stealth_mode: bool = Field(default=True, description="反检测模式")
+    viewport_width: int = Field(default=1920, description="视口宽度")
+    viewport_height: int = Field(default=1080, description="视口高度")
+    user_agent: Optional[str] = Field(None, description="自定义 User-Agent")
+
+
+class RPCConfig(BaseModel):
+    """RPC 服务器配置"""
+    enabled: bool = Field(default=True, description="是否启用RPC")
+    host: str = Field(default="127.0.0.1", description="监听地址")
+    port: int = Field(default=18800, description="监听端口")
+    auth_token: Optional[str] = Field(None, description="认证令牌")
+
+
+class HookConfig(BaseModel):
+    """Hook 配置"""
+    target: str = Field(..., description="目标函数路径(如 window.encrypt)")
+    hook_type: HookType = Field(default=HookType.TRACE, description="Hook类型")
+    script: Optional[str] = Field(None, description="自定义Hook脚本")
+    capture_args: bool = Field(default=True, description="是否捕获参数")
+    capture_result: bool = Field(default=True, description="是否捕获返回值")
+    capture_stack: bool = Field(default=False, description="是否捕获调用栈")
+
+
+class BrowserSession(BaseModel):
+    """浏览器会话状态"""
+    session_id: str = Field(..., description="会话ID")
+    url: Optional[str] = Field(None, description="当前URL")
+    title: Optional[str] = Field(None, description="页面标题")
+    status: str = Field(default="created", description="会话状态(created/navigating/ready/closed)")
+    hooks: List[HookConfig] = Field(default_factory=list, description="已注入的Hook列表")
+    captured_keys: List[Dict[str, Any]] = Field(default_factory=list, description="捕获的密钥")
+    captured_calls: List[Dict[str, Any]] = Field(default_factory=list, description="捕获的函数调用")
+    created_at: Optional[datetime] = Field(None, description="创建时间")
+
+
+class JSRPCResult(BaseModel):
+    """JSRPC 调用结果"""
+    session_id: str = Field(..., description="会话ID")
+    function: str = Field(..., description="调用的函数名")
+    arguments: List[Any] = Field(default_factory=list, description="调用参数")
+    result: Any = Field(None, description="返回值")
+    error: Optional[str] = Field(None, description="错误信息")
+    duration_ms: float = Field(default=0.0, description="调用耗时(ms)")
+    timestamp: Optional[datetime] = Field(None, description="调用时间")
+
+
 class ProjectConfig(BaseModel):
     """项目配置"""
     name: str = Field(..., description="项目名称")
     path: str = Field(..., description="项目路径")
-    language: Literal["java", "python", "go", "auto"] = Field(default="auto", description="主要语言")
+    language: Literal["java", "python", "go", "javascript", "typescript", "auto"] = Field(default="auto", description="主要语言")
     scanners: List[ScanTool] = Field(default_factory=lambda: [ScanTool.SEMGREP], description="扫描工具列表")
     ignore_paths: List[str] = Field(default_factory=list, description="忽略路径")
     custom_rules: List[str] = Field(default_factory=list, description="自定义规则文件")

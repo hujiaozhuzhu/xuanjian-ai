@@ -30,6 +30,13 @@ app = typer.Typer(
     help="玄鉴 (xuanjian-ai) — 代码审计误报排查 MCP 工具",
     add_completion=False,
 )
+
+# 注册浏览器子命令
+try:
+    from .browser_commands import app as browser_app
+    app.add_typer(browser_app, name="browser", help="浏览器自动化 (JSRPC)")
+except ImportError:
+    pass  # 未安装 aiohttp 时跳过
 console = Console()
 
 # ─────────────────────── 辅助 ───────────────────────

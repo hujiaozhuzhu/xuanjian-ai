@@ -15,6 +15,9 @@ from ..models import ScanResult, ScanTool
 
 logger = logging.getLogger(__name__)
 
+# JS/TS 文件扩展名
+JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+
 
 class ScannerManager:
     """扫描器管理器"""
@@ -42,6 +45,15 @@ class ScannerManager:
         bandit_config = scanner_configs.get("bandit", {"enabled": True})
         if bandit_config.get("enabled", True):
             self.scanners[ScanTool.BANDIT] = BanditScanner(bandit_config)
+
+        # JS Scanner (JavaScript/TypeScript)
+        try:
+            from .js_scanner import JSScanner
+            js_config = scanner_configs.get("js_scanner", {"enabled": True})
+            if js_config.get("enabled", True):
+                self.scanners[ScanTool.JS_SCANNER] = JSScanner(js_config)
+        except ImportError:
+            logger.debug("JS Scanner not available")
 
     async def scan(
         self,
@@ -116,6 +128,10 @@ class ScannerManager:
             return "python"
         if os.path.exists(os.path.join(target_path, "go.mod")):
             return "go"
+        if os.path.exists(os.path.join(target_path, "package.json")):
+            return "javascript"
+        if os.path.exists(os.path.join(target_path, "tsconfig.json")):
+            return "typescript"
 
         # 按文件扩展名统计
         ext_count = {}
@@ -123,6 +139,13 @@ class ScannerManager:
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
                 ext_count[ext] = ext_count.get(ext, 0) + 1
+
+        # JavaScript/TypeScript 检测
+        js_count = sum(ext_count.get(ext, 0) for ext in JS_EXTENSIONS)
+        if js_count > 0 and js_count >= ext_count.get(".java", 0):
+            if ext_count.get(".ts", 0) > 0 or ext_count.get(".tsx", 0) > 0:
+                return "typescript"
+            return "javascript"
 
         if ext_count.get(".java", 0) > ext_count.get(".py", 0):
             return "java"
@@ -139,6 +162,11 @@ class ScannerManager:
             return [ScanTool.SEMGREP, ScanTool.FINDSECBUGS]
         elif language == "python":
             return [ScanTool.SEMGREP, ScanTool.BANDIT]
+        elif language in ("javascript", "typescript"):
+            tools = [ScanTool.SEMGREP]
+            if ScanTool.JS_SCANNER in self.scanners:
+                tools.append(ScanTool.JS_SCANNER)
+            return tools
         elif language == "go":
             return [ScanTool.SEMGREP]
         else:
