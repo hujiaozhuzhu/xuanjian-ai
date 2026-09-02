@@ -1,0 +1,45 @@
+id: CHAIN-010
+name: "AI幻觉 → 依赖投毒 → 构建劫持"
+severity: HIGH
+cvss: 8.0
+epss: 0.35
+
+steps:
+  - step: 1
+    name: "AI幻觉依赖"
+    rule: js.aigc.hallucination-import
+    description: "AI生成的代码引用不存在的包"
+    condition: "import from hallucinated-package-name"
+
+  - step: 2
+    name: "依赖投毒"
+    rule: dependency_poisoning
+    description: "攻击者注册幻觉包名"
+    condition: "在npm/pypi注册同名恶意包"
+
+  - step: 3
+    name: "构建劫持"
+    rule: build_hijack
+    description: "恶意包在安装时执行代码"
+    condition: "preinstall/postinstall脚本"
+
+exploit_script: |
+  # Step 1: 检查AI生成的依赖
+  grep -r "import.*from" src/ | grep -v node_modules
+
+  # Step 2: 验证包是否存在
+  npm view <package-name>
+  pip index versions <package-name>
+
+  # Step 3: 检查包内容
+  npm pack <package-name> && tar -xzf *.tgz
+  cat package/package.json | jq '.scripts'
+
+remediation:
+  priority: P1
+  effort: "2小时"
+  suggestions:
+    - "验证所有import的包在registry中存在"
+    - "使用npm/pypi的verified publishers"
+    - "实施SBOM(软件物料清单)"
+    - "使用AI代码审查工具检查幻觉依赖"

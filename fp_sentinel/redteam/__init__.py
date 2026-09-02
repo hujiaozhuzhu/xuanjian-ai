@@ -14,6 +14,12 @@ from .adversarial_loop import (
     ScanSimulator,
 )
 
+# 状态持久化（v2.0）
+try:
+    from .state_store import AdversarialStateStore
+except ImportError:
+    AdversarialStateStore = None
+
 __all__ = [
     "RedTeamGenerator",
     "BypassCase",
@@ -25,4 +31,5 @@ __all__ = [
     "RoundResult",
     "ConvergenceCriteria",
     "ScanSimulator",
+    "AdversarialStateStore",
 ]

