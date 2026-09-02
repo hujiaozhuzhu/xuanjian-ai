@@ -1,0 +1,79 @@
+{
+  "description": "玄鉴 Python 靶场预期检出结果",
+  "total_vulnerabilities": 7,
+  "total_safe_patterns": 7,
+  "findings": [
+    {
+      "id": "vuln-001",
+      "file": "app.py",
+      "line_approx": 25,
+      "rule_id": "py.injection.sql",
+      "severity": "CRITICAL",
+      "description": "SQL 字符串拼接",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-002",
+      "file": "app.py",
+      "line_approx": 40,
+      "rule_id": "py.injection.command",
+      "severity": "CRITICAL",
+      "description": "os.system 执行用户输入",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-003",
+      "file": "app.py",
+      "line_approx": 60,
+      "rule_id": "py.injection.eval",
+      "severity": "CRITICAL",
+      "description": "eval 执行用户输入",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-004",
+      "file": "app.py",
+      "line_approx": 78,
+      "rule_id": "py.deserialization.pickle",
+      "severity": "CRITICAL",
+      "description": "pickle.loads 反序列化",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-005",
+      "file": "app.py",
+      "line_approx": 95,
+      "rule_id": "py.crypto.weak_hash",
+      "severity": "HIGH",
+      "description": "MD5 密码哈希",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-006",
+      "file": "app.py",
+      "line_approx": 110,
+      "rule_id": "py.path.traversal",
+      "severity": "HIGH",
+      "description": "路径拼接无验证",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-007",
+      "file": "app.py",
+      "line_approx": 128,
+      "rule_id": "py.deserialization.yaml",
+      "severity": "CRITICAL",
+      "description": "yaml.load 不安全",
+      "type": "vulnerability"
+    },
+    {
+      "id": "vuln-008",
+      "file": "app.py",
+      "line_approx": 10,
+      "rule_id": "py.crypto.hardcoded_key",
+      "severity": "CRITICAL",
+      "description": "硬编码密钥",
+      "type": "vulnerability"
+    }
+  ]
+}
