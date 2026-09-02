@@ -17,7 +17,7 @@ from ..models import (
 from .manager import BrowserManager
 from .script_injector import ScriptInjector
 from .hook_manager import HookManager
-from .rpc_server import RPCServer
+from ..rpc_server import RPCServer
 
 logger = logging.getLogger(__name__)
 
