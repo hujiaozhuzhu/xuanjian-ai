@@ -455,6 +455,164 @@ NODEJS_RULES = [
 ]
 
 
+# ─────────────────────── AIGC 安全规则 (v2.0) ───────────────────────
+
+AIGC_SECURITY_RULES = [
+    # ── Prompt Injection ──
+    CustomRule(
+        rule_id="js.aigc.prompt-injection-concat",
+        description="Prompt 拼接可能导致 Prompt Injection",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"(prompt|system_prompt|messages)\s*[\[+].*\+.*(?:user|input|req\.)",
+        category="AIGC",
+        cwe="CWE-77",
+        owasp="A03:2021 - Injection",
+        false_positive_indicators=["template", "escape", "sanitize"],
+    ),
+    CustomRule(
+        rule_id="js.aigc.prompt-injection-template",
+        description="模板字符串中的 Prompt Injection 风险",
+        severity="HIGH",
+        confidence=0.65,
+        code_pattern=r"`[^`]*\$\{.*(?:user|input|req\.|params)[^`]*`",
+        category="AIGC",
+        cwe="CWE-77",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.aigc.system-prompt-leak",
+        description="系统提示词可能被泄露",
+        severity="MEDIUM",
+        confidence=0.6,
+        code_pattern=r"system(?:_prompt|Message)?\s*[:=].*['\"]",
+        category="AIGC",
+        cwe="CWE-200",
+        owasp="A01:2021 - Broken Access Control",
+    ),
+
+    # ── AI 输出直接执行 ──
+    CustomRule(
+        rule_id="js.aigc.llm-output-eval",
+        description="LLM 输出直接作为代码执行",
+        severity="CRITICAL",
+        confidence=0.85,
+        code_pattern=r"eval\s*\(\s*(?:llm|ai|gpt|claude|response|completion|result)",
+        category="AIGC",
+        cwe="CWE-95",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-output-function",
+        description="LLM 输出直接作为函数构造",
+        severity="CRITICAL",
+        confidence=0.8,
+        code_pattern=r"new\s+Function\s*\(\s*(?:llm|ai|gpt|claude|response|completion|result)",
+        category="AIGC",
+        cwe="CWE-95",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-output-sql",
+        description="LLM 输出直接作为 SQL 查询",
+        severity="CRITICAL",
+        confidence=0.8,
+        code_pattern=r"(query|execute)\s*\(\s*`?\$\{?\s*(?:llm|ai|gpt|claude|response|completion)",
+        category="AIGC",
+        cwe="CWE-89",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-output-command",
+        description="LLM 输出直接作为系统命令执行",
+        severity="CRITICAL",
+        confidence=0.85,
+        code_pattern=r"(exec|spawn|execSync)\s*\(\s*(?:llm|ai|gpt|claude|response|completion|result)",
+        category="AIGC",
+        cwe="CWE-78",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-output-shell",
+        description="LLM 输出直接传递给 shell",
+        severity="CRITICAL",
+        confidence=0.8,
+        code_pattern=r"shell\.(?:exec|run|command)\s*\(\s*(?:llm|ai|gpt|claude|response|completion)",
+        category="AIGC",
+        cwe="CWE-78",
+        owasp="A03:2021 - Injection",
+    ),
+
+    # ── 幻觉依赖检测 ──
+    CustomRule(
+        rule_id="js.aigc.hallucination-import",
+        description="导入可能不存在的 AI 生成的包名",
+        severity="MEDIUM",
+        confidence=0.4,
+        code_pattern=r"(?:import|require)\s*\(\s*['\"](?:ai-|gpt-|llm-|openai-|claude-)[\w-]+['\"]",
+        category="AIGC",
+        cwe="CWE-829",
+        owasp="A08:2021 - Software and Data Integrity Failures",
+    ),
+
+    # ── AI 特有逻辑漏洞 ──
+    CustomRule(
+        rule_id="js.aigc.unvalidated-llm-response",
+        description="LLM 响应未经验证直接使用",
+        severity="MEDIUM",
+        confidence=0.5,
+        code_pattern=r"(?:await\s+)?(?:openai|anthropic|llm|ai)\.(?:chat|complete|generate).*\.(?:json|data|content)",
+        category="AIGC",
+        cwe="CWE-20",
+        owasp="A04:2021 - Insecure Design",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-api-key-exposure",
+        description="LLM API Key 硬编码",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"(?:OPENAI|ANTHROPIC|CLAUDE|GPT)[_-]?(?:API[_-]?KEY|SECRET)\s*[:=]\s*['\"][sk-ant-][^'\"]+['\"]",
+        category="AIGC",
+        cwe="CWE-798",
+        owasp="A07:2021 - Identification and Authentication Failures",
+    ),
+    CustomRule(
+        rule_id="js.aigc.llm-token-in-url",
+        description="LLM Token 通过 URL 传输",
+        severity="MEDIUM",
+        confidence=0.6,
+        code_pattern=r"(?:openai|anthropic|api)\.(?:openai|anthropic)\.com.*(?:token|key|api_key)=",
+        category="AIGC",
+        cwe="CWE-598",
+        owasp="A02:2021 - Cryptographic Failures",
+    ),
+
+    # ── RLS/权限缺失 ──
+    CustomRule(
+        rule_id="js.aigc.supabase-no-rls",
+        description="Supabase 查询未启用 RLS",
+        severity="MEDIUM",
+        confidence=0.5,
+        code_pattern=r"supabase\.(?:from|rpc)\s*\([^)]*\)\.(?:select|insert|update|delete)",
+        category="AIGC",
+        cwe="CWE-284",
+        owasp="A01:2021 - Broken Access Control",
+        false_positive_indicators=["auth", "policy", "rls"],
+    ),
+    CustomRule(
+        rule_id="js.aigc.firestore-no-rules",
+        description="Firestore 操作未验证安全规则",
+        severity="MEDIUM",
+        confidence=0.45,
+        code_pattern=r"(?:getDoc|setDoc|updateDoc|deleteDoc|addDoc)\s*\(\s*(?:doc|collection)\s*\(",
+        category="AIGC",
+        cwe="CWE-284",
+        owasp="A01:2021 - Broken Access Control",
+        file_pattern="*firebase*|*firestore*",
+    ),
+]
+
+
 # ─────────────────────── 汇总所有规则 ───────────────────────
 
 JS_SECURITY_RULES: List[CustomRule] = (
@@ -466,6 +624,7 @@ JS_SECURITY_RULES: List[CustomRule] = (
     + TRANSPORT_RULES
     + UNSAFE_RULES
     + NODEJS_RULES
+    + AIGC_SECURITY_RULES  # v2.0 新增
 )
 
 # 规则ID索引
