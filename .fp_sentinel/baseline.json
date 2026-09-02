@@ -1,0 +1,16 @@
+{
+  "version": "1.0",
+  "fingerprints": [
+    {
+      "fingerprint": "ceb812f226ec79f531fa6a163a13373e",
+      "tool": "js_scanner",
+      "rule_id": "js.xss.innerhtml",
+      "file": "app.js",
+      "line": 10,
+      "code_normalized": "element.innerHTML = userInput",
+      "verdict": "false_positive",
+      "confidence": 0.9,
+      "reason": "test"
+    }
+  ]
+}
