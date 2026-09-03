@@ -37,6 +37,23 @@ try:
     app.add_typer(browser_app, name="browser", help="浏览器自动化 (JSRPC)")
 except ImportError:
     pass  # 未安装 aiohttp 时跳过
+
+# 注册攻防数据子命令（Agent-Attack, v2.2.0）
+try:
+    from .attack_commands import attack_app, attack_purge_entry
+    app.add_typer(attack_app, name="attack", help="攻防数据管理 (PoC 30 天清理)")
+    app.command("attack-purge", help="清理超过保留期的攻防 PoC 数据 (S5)")(attack_purge_entry)
+except ImportError:
+    pass
+
+# 注册开发者画像子命令（Agent-Profile 领地，由 Agent-Attack 统一注册；
+# 模块未就绪或内部异常时静默降级，不影响其余命令——对方修复后自动生效）
+try:
+    from .profile_commands import profile_app
+    app.add_typer(profile_app, name="profile", help="开发者画像")
+except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
+    pass
+
 console = Console()
 
 
@@ -87,10 +104,19 @@ def scan(
     scanners: Optional[str] = typer.Option(None, "--scanner", "-s", help="指定扫描器 (逗号分隔: semgrep,bandit,findsecbugs)"),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="YAML 配置文件路径"),
     output_format: str = typer.Option("table", "--format", "-f", help="输出格式 (table/json/sarif)"),
+    report: str = typer.Option(
+        "compliance", "--report",
+        help="生成报告类型 (compliance/attack/all/none)，默认 compliance 向后兼容",
+    ),
+    output: str = typer.Option("./reports/", "--output", help="报告输出目录 (S7 白名单)"),
     save_to_db: bool = typer.Option(True, "--save/--no-save", help="是否保存到数据库"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """扫描项目，发现安全问题"""
+
+    if report not in ("compliance", "attack", "all", "none"):
+        console.print(f"[red]未知报告类型: {report}（可选 compliance/attack/all/none）[/red]")
+        raise typer.Exit(1)
 
     async def _run():
         _setup_logging(verbose)
@@ -141,14 +167,27 @@ def scan(
             _output_table(findings)
 
         # 保存到数据库
+        scan_id = None
         if save_to_db and findings:
-            await _save_findings(
+            scan_id = await _save_findings(
                 findings=findings,
                 project_path=project_path,
                 scanner_name=",".join(s.value for s in (scanner_list or [ScanTool.SEMGREP])),
                 language=language,
                 duration=duration,
                 config=config,
+            )
+
+        # 生成报告（S7：只写入 --output 白名单目录）
+        if report != "none" and findings:
+            await _generate_reports(
+                report_kind=report,
+                output_dir=output,
+                project_path=project_path,
+                language=language,
+                findings=findings,
+                config=config,
+                scan_id=scan_id,
             )
 
     asyncio.run(_run())
@@ -239,6 +278,77 @@ async def _save_findings(
         # 保存 findings
         count = await finding_repo.bulk_create(findings, scan_id=history.scan_id)
         console.print(f"[dim]已保存 {count} 条结果到数据库 ({db_path})[/dim]")
+        return history.scan_id
+
+
+async def _generate_reports(
+    report_kind: str,
+    output_dir: str,
+    project_path: str,
+    language: str,
+    findings: List[Finding],
+    config,
+    scan_id: Optional[str],
+) -> None:
+    """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二）"""
+    from pathlib import Path as _Path
+
+    from ..attack import POC_TEMPLATES, generate_poc
+    from ..attack.exploitability import assess
+    from ..attack.chain_orchestrator import orchestrate, node_id
+    from ..attack.poc_templates import DEFAULT_PARAM, DEFAULT_TARGET
+    from ..attack.target_validator import verify
+    from ..cli.attack_commands import build_attack_data, save_attack_records, vuln_type_for_rule
+    from ..reporting.compliance_report import compute_trend, generate_compliance_report
+    from ..reporting.attack_report import generate_attack_report, write_report
+    from datetime import datetime, timezone
+
+    project_name = _Path(project_path).name
+    out = _Path(output_dir).resolve()
+
+    async with get_database(
+        expand_db_path(config.database.path), config.database.wal_mode
+    ) as db:
+        finding_repo = FindingRepo(db)
+        history_repo = ScanHistoryRepo(db)
+
+        if report_kind in ("compliance", "all"):
+            trend = await compute_trend(
+                finding_repo, history_repo, project_path, current_scan_id=scan_id,
+            )
+            content = generate_compliance_report(
+                project=project_name,
+                project_path=project_path,
+                trend=trend,
+                findings=findings,
+            )
+            path = write_report(content, str(out), "compliance_report.md")
+            console.print(f"[green]✓ 合规报告已生成: {path}[/green]")
+
+        if report_kind in ("attack", "all"):
+            chain_report, exploit_results, verify_results, poc_map = build_attack_data(
+                project_path, findings,
+            )
+            content = generate_attack_report(
+                project=project_name,
+                findings=findings,
+                chain_report=chain_report,
+                verify_results=verify_results,
+                exploit_results=exploit_results,
+                poc_map=poc_map,
+            )
+            path = write_report(content, str(out), "attack_report.md")
+            console.print(f"[green]✓ 攻防报告已生成: {path}[/green]")
+
+            # S5：攻防 PoC 数据落库记录 created_at（供 attack-purge 清理）
+            try:
+                n = await save_attack_records(
+                    db, project_path, findings,
+                    exploit_results, verify_results, poc_map,
+                )
+                console.print(f"[dim]已记录 {n} 条攻防数据（30 天保留，attack-purge 可清理）[/dim]")
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"攻防数据落库失败: {e}")
 
 
 # ─────────────────────── list 命令 ───────────────────────

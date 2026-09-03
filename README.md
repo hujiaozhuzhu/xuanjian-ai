@@ -8,15 +8,26 @@
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝
 ```
 
-# 🔍 玄鉴 XuanJian AI v2.0
+# 🔍 玄鉴 XuanJian AI v2.2.0
 
 > **鉴伪存真，洞察代码风险** — 面向安全研究团队的开源代码审计与红蓝对抗平台
+
+> v2.2.0 聚焦三核能力：攻击可验证、双报告体系、开发者画像。所有攻防验证默认只做本地特征模拟，身份画像默认匿名化。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-1.0-green.svg)](https://modelcontextprotocol.io)
 
 ---
+
+## ✨ v2.2.0 新特性
+
+| 特性 | 说明 |
+|------|------|
+| 🎯 **攻击可验证** | 20 类本地 PoC 模板、可利用性评分、攻击链编排；目标限制为 localhost/127.0.0.1 |
+| 📄 **双报告体系** | 合规报告包含 Diff/CVE/ROI/趋势；攻防报告包含验证状态、攻击路径与修复优先级 |
+| 👤 **开发者画像** | 只读 git blame、SHA256 匿名别名、六维画像、团队健康度与本地 SQLite 存储 |
+| 🔒 **零危险边界** | 不修改源代码、不删除用户文件、不攻击外部目标、不向外部 API 写数据 |
 
 ## ✨ v2.0 新特性
 
@@ -92,6 +103,19 @@ fp-sentinel mark <finding-id> --reason "使用PreparedStatement" --scope rule
 
 # 查看统计
 fp-sentinel stats
+
+# 生成合规报告或攻防报告（报告仅写入 --output 目录）
+fp-sentinel scan /path/to/project --report compliance --output ./reports
+fp-sentinel scan /path/to/project --report attack --output ./reports
+fp-sentinel scan /path/to/project --report all --output ./reports
+
+# 开发者画像（默认只显示匿名别名）
+fp-sentinel profile me /path/to/project
+fp-sentinel profile team /path/to/project
+fp-sentinel profile forget /path/to/project --alias <alias>
+
+# 清理超过 30 天的本地攻防 PoC 记录
+fp-sentinel attack purge --days 30
 
 # 浏览器自动化（JSRPC）
 fp-sentinel browser start --url "https://target.com/login"
@@ -196,6 +220,15 @@ fp-sentinel mcp --transport sse --port 8000
 ```
 
 ---
+
+## 🔐 v2.2.0 安全与隐私边界
+
+- PoC 生成器只接受 `localhost`、`127.0.0.1` 和 `::1`，外部目标会被拒绝。
+- 默认验证模式为源码特征模拟，不发起网络请求；Docker 验证必须显式开启且失败时降级为 `simulated`。
+- git 归因仅允许 `log`、`blame`、`show`，不执行 commit、push、tag、config 等写操作。
+- 开发者 email 不落盘，画像使用确定性 SHA256 别名；原始姓名仅在内存态或本地加密字段中处理。
+- `--reveal` 必须同时满足环境变量和安全负责人确认参数；画像仅用于培训与能力提升，不用于绩效考核。
+- 报告路径经过白名单校验，PoC 记录支持按保留期清理；不会修改被扫描源代码。
 
 ## 🛡️ 四级降噪引擎
 

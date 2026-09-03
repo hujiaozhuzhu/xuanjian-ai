@@ -68,7 +68,7 @@ class Finding(BaseModel):
     line_start: int = Field(..., description="起始行号")
     line_end: Optional[int] = Field(None, description="结束行号")
     code_snippet: str = Field("", description="问题代码片段")
-    message: str = Field(..., description="问题描述")
+    message: str = Field("", description="问题描述")
     category: Optional[str] = Field(None, description="漏洞类别(如 SQL_INJECTION, XSS)")
     language: Optional[str] = Field(None, description="编程语言")
     fingerprint: Optional[str] = Field(None, description="结果指纹(用于去重)")
