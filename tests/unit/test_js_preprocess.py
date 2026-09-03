@@ -10,6 +10,7 @@ from fp_sentinel.preprocessors.js_beautify import (
     preprocess_javascript,
 )
 from fp_sentinel.scanners.js_scanner import JSScanner
+from fp_sentinel.scanners.normalizer import ResultNormalizer
 
 
 def _minified_bundle(statement: str) -> str:
@@ -65,6 +66,31 @@ async def test_minified_bundle_results_keep_original_line_and_add_formatted_line
     assert result.metadata["preprocessed"] is True
     assert result.metadata["beautified_line"] > 1
     assert result.metadata["original_offset_hint"]["original_start"] > first.metadata["original_offset_hint"]["original_start"]
+
+
+@pytest.mark.asyncio
+async def test_manager_reports_multiple_matching_locations_in_one_minified_bundle(tmp_path):
+    bundle = tmp_path / "bundle.js"
+    bundle.write_text(_minified_bundle("eval(userInput)"), encoding="utf-8")
+    from fp_sentinel.scanners.manager import ScannerManager
+
+    manager = ScannerManager(
+        config={
+            "scanners": {
+                "semgrep": {"enabled": False},
+                "js_scanner": {"enabled": True, "check_dependencies": False, "check_hardcoded_secrets": False},
+            }
+        }
+    )
+    results = await manager.scan(str(bundle), language="javascript")
+    eval_results = [result for result in results if "eval" in result.rule_id.lower()]
+
+    assert len(eval_results) == 2048
+    assert {result.metadata["beautified_line"] for result in eval_results} == set(range(1, 2049))
+
+    findings = ResultNormalizer().deduplicate(ResultNormalizer().normalize_many(eval_results))
+    assert len(findings) == 2048
+    assert len({finding.fingerprint for finding in findings}) == 2048
 
 
 @pytest.mark.asyncio

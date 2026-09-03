@@ -111,12 +111,26 @@ class ScannerManager:
                 logger.error(f"Scanner failed: {results}")
                 continue
             for r in results:
-                key = f"{r.file}:{r.line}:{r.rule_id}"
+                key = self._result_dedup_key(r)
                 if key not in seen:
                     seen.add(key)
                     all_results.append(r)
 
         return all_results
+
+    @staticmethod
+    def _result_dedup_key(result: ScanResult) -> str:
+        """Keep distinct static locations in a minified bundle from being collapsed."""
+        metadata = result.metadata or {}
+        preprocess_location = metadata.get("original_offset_hint") or {}
+        original_offset = preprocess_location.get("original_start")
+        beautified_line = metadata.get("beautified_line")
+        if original_offset is not None or beautified_line is not None:
+            return (
+                f"{result.file}:{result.rule_id}:"
+                f"offset={original_offset}:formatted={beautified_line}"
+            )
+        return f"{result.file}:{result.line}:{result.rule_id}"
 
     def _detect_language(self, target_path: str) -> str:
         """自动检测项目语言"""

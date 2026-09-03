@@ -135,8 +135,20 @@ class ResultNormalizer:
         # 截取前 200 字符，避免长代码影响
         normalized_code = normalized_code[:200]
 
-        raw = f"{finding.scanner}:{finding.rule_id}:{finding.file_path}:{normalized_code}"
-        return hashlib.md5(raw.encode('utf-8')).hexdigest()
+        metadata = finding.metadata or {}
+        preprocess_location = metadata.get("original_offset_hint") or {}
+        original_offset = preprocess_location.get("original_start")
+        beautified_line = metadata.get("beautified_line")
+        location = (
+            f"offset={original_offset}:formatted={beautified_line}"
+            if original_offset is not None or beautified_line is not None
+            else f"line={finding.line_start}"
+        )
+        raw = (
+            f"{finding.scanner}:{finding.rule_id}:{finding.file_path}:"
+            f"{location}:{normalized_code}"
+        )
+        return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
     def deduplicate(self, findings: List[Finding]) -> List[Finding]:
         """

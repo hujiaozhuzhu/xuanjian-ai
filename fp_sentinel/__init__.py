@@ -10,7 +10,7 @@
 - L3: 历史基线 (BaselineFilter)
 """
 
-__version__ = "2.2.2"
+__version__ = "2.2.3"
 __author__ = "XuanJian AI"
 
 from .server import create_server, FPServer, create_app

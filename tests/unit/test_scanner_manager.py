@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from fp_sentinel.scanners.manager import ScannerManager
-from fp_sentinel.models import ScanTool
+from fp_sentinel.models import ScanResult, ScanTool, Severity
 
 
 class TestScannerManager:
@@ -26,6 +26,27 @@ class TestScannerManager:
 
         assert "semgrep" not in manager.get_available_scanners()
         assert any("fp-sentinel[scanners]" in message for message in manager.get_unavailable_scanner_messages())
+
+    def test_minified_results_use_offset_aware_dedup_keys(self):
+        base = dict(
+            tool=ScanTool.JS_SCANNER,
+            rule_id="js.injection.eval",
+            file="bundle.js",
+            line=1,
+            code="eval(userInput);",
+            severity=Severity.CRITICAL,
+            message="unsafe eval",
+        )
+        first = ScanResult(
+            **base,
+            metadata={"beautified_line": 10, "original_offset_hint": {"original_start": 24}},
+        )
+        second = ScanResult(
+            **base,
+            metadata={"beautified_line": 20, "original_offset_hint": {"original_start": 64}},
+        )
+
+        assert self.manager._result_dedup_key(first) != self.manager._result_dedup_key(second)
 
     def test_detect_language_javascript(self, tmp_path):
         """检测JavaScript项目"""
