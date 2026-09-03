@@ -162,6 +162,8 @@ def scan(
         console.print(f"[green]✓ 扫描完成[/green]  耗时 {duration:.1f}s  发现 {len(findings)} 个问题\n")
         for message in manager.get_unavailable_scanner_messages():
             console.print(f"[yellow][WARN] {message}[/yellow]")
+        for message in manager.get_runtime_warnings():
+            console.print(f"[yellow][WARN] {message}[/yellow]")
 
         # 输出
         if output_format == "json":
@@ -224,7 +226,7 @@ def _output_table(findings: List[Finding]) -> None:
             f.scanner,
             f.rule_id,
             _truncate(f.file_path, 50),
-            str(f.line_start),
+            _format_location(f),
             _truncate(f.message, 50),
         )
 
@@ -265,6 +267,15 @@ def _write_structured_results(
         payload = [finding.model_dump(mode="json") for finding in findings]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
     console.print(f"[dim]结构化结果已写入: {path}[/dim]")
+
+
+def _format_location(finding: Finding) -> str:
+    """Display original bundle location and optional static prettified position."""
+    metadata = finding.metadata or {}
+    beautified_line = metadata.get("beautified_line")
+    if beautified_line:
+        return f"{finding.line_start} (fmt:{beautified_line})"
+    return str(finding.line_start)
 
 
 def _truncate(s: str, max_len: int) -> str:

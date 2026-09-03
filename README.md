@@ -8,11 +8,11 @@
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝
 ```
 
-# 玄鉴 XuanJian AI v2.2.1
+# 玄鉴 XuanJian AI v2.2.2
 
 > **鉴伪存真，洞察代码风险** — 面向安全研究团队的开源代码审计与红蓝对抗平台
 
-> v2.2.1 是基于真实 Windows 用户反馈的稳定性补丁：CLI 在 GBK/CP936 终端安全降级，Semgrep 未安装时明确提示，支持无需 PATH 配置的模块入口。所有攻防验证默认只做本地特征模拟，身份画像默认匿名化。
+> v2.2.2 面向 webpack 等生产压缩产物提供基础可用性：大体积、近似单行的 JavaScript 会在内存中静态格式化后扫描，结果保留原始文件位置、格式化后行号与字符偏移提示。不会执行、解密、动态解包或修改被扫描文件。
 
 ## Windows 用户注意
 
@@ -25,13 +25,20 @@ python -m fp_sentinel scan C:\path\to\project --lang javascript
 
 如需直接使用 `fp-sentinel` 命令，请将当前 Python 环境的 `Scripts` 目录加入 PATH。GBK/CP936 终端会自动使用 `[SCAN]`、`[OK]`、`[WARN]` 等 ASCII 状态标记，不会改动系统代码页。
 
-安装建议：基础安装适用于内置规则；高级 Semgrep 规则使用 `pip install -e ".[scanners]"`；完整安装使用 `pip install -e ".[all]"`。
+安装建议：基础安装适用于内置规则；高级 Semgrep 规则使用 `pip install -e ".[scanners]"`；生产压缩 JavaScript 预处理使用 `pip install -e ".[preprocess]"`；完整安装使用 `pip install -e ".[all]"`。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![MCP](https://img.shields.io/badge/MCP-1.0-green.svg)](https://modelcontextprotocol.io)
 
 ---
+
+## ✨ v2.2.2 生产压缩代码支持
+
+- 对满足以下特征的 JavaScript/TypeScript 文件启用可选静态格式化：大于 10KB、换行不超过 4 行、平均行长超过 2000 字符。
+- 发现项保留原始文件行号，并附带 `格式化后行号` 和原始字符偏移提示；JSON 和 SARIF 也保留该元数据。
+- 检测到疑似 Base64/`atob`/`fromCharCode` 重度混淆时，只给出“建议扫描原始源码”的提示。工具不解密、不动态执行、不解析 source map。
+- 未安装 `jsbeautifier` 或格式化失败时，原文件仍会按原始文本扫描，CLI 会说明定位能力受限。
 
 ## ✨ v2.2.0 新特性
 

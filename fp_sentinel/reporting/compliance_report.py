@@ -152,6 +152,14 @@ def _roi_sort_key(pair: Tuple[Any, "object"]):
     return (-_SEVERITY_WEIGHT.get(_sev_of(finding), 0), sug.effort_minutes)
 
 
+def _display_location(finding: Any) -> str:
+    """Show original bundle line plus static prettified line when available."""
+    line = getattr(finding, "line_start", 0)
+    metadata = getattr(finding, "metadata", None) or {}
+    beautified_line = metadata.get("beautified_line")
+    return f"{line} (格式化后:{beautified_line})" if beautified_line else str(line)
+
+
 def _attention_section(findings: List[Any], limit: int = 10) -> str:
     """需关注列表（ROI 排序）+ Diff 建议块"""
     pairs = [(f, suggest_fix(f)) for f in findings]
@@ -161,14 +169,14 @@ def _attention_section(findings: List[Any], limit: int = 10) -> str:
     diff_blocks = []
     for i, (f, sug) in enumerate(pairs[:limit], 1):
         fp = Path(getattr(f, "file_path", "?")).name
-        line = getattr(f, "line_start", 0)
+        location = _display_location(f)
         hours = f"{sug.effort_minutes}min"
         lines.append(
-            f"| {i} | {_sev_of(f)} | {sug.title} | {fp}:{line} | {hours} |"
+            f"| {i} | {_sev_of(f)} | {sug.title} | {fp}:{location} | {hours} |"
             f" {sug.reference_cve or '-'} |"
         )
         diff_blocks.append(
-            f"#### {i}. {sug.title} — {fp}:{line}\n"
+            f"#### {i}. {sug.title} — {fp}:{location}\n"
             f"- 参考案例: {sug.reference_cve or 'N/A'}\n"
             f"- 预计工时: {sug.effort_minutes} 分钟\n"
             f"- 事故背景: {sug.incident_note}\n"

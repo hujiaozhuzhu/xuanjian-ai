@@ -90,6 +90,7 @@ def _build_result(r: Any, rule_index: Dict[str, int]) -> Dict[str, Any]:
     message = _get(r, "message", "") or rid
     code = _get(r, "code_snippet", None) or _get(r, "code", "") or ""
 
+    metadata = _get(r, "metadata", {}) or {}
     result: Dict[str, Any] = {
         "ruleId": rid,
         "ruleIndex": rule_index.get(rid, 0),
@@ -109,6 +110,13 @@ def _build_result(r: Any, rule_index: Dict[str, int]) -> Dict[str, Any]:
             "cwe": _get(r, "cwe", None),
         },
     }
+    if metadata.get("beautified_line"):
+        result["properties"]["preprocessing"] = {
+            "kind": metadata.get("preprocessor"),
+            "beautifiedLine": metadata["beautified_line"],
+            "originalLineRange": metadata.get("original_line_range"),
+            "originalOffsetHint": metadata.get("original_offset_hint", {}),
+        }
     if code:
         result["properties"]["codeSnippet"] = code[:200]
 

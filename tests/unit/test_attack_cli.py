@@ -98,9 +98,9 @@ class TestAttackPurge:
 
 
 class TestVersion:
-    def test_version_is_2_2_1(self):
-        assert __version__ == "2.2.1"
+    def test_version_is_2_2_2(self):
+        assert __version__ == "2.2.2"
 
     def test_version_command(self):
         result = runner.invoke(app, ["version"])
-        assert "2.2.1" in result.output
+        assert "2.2.2" in result.output

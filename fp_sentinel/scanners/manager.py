@@ -200,3 +200,12 @@ class ScannerManager:
             if getattr(scanner, "available", True) is False
             and getattr(scanner, "unavailable_reason", None)
         ]
+
+    def get_runtime_warnings(self) -> List[str]:
+        """返回扫描过程中产生的可操作提示，例如压缩代码预处理状态。"""
+        warnings: List[str] = []
+        for scanner in self.scanners.values():
+            getter = getattr(scanner, "get_preprocess_warnings", None)
+            if getter:
+                warnings.extend(getter())
+        return list(dict.fromkeys(warnings))

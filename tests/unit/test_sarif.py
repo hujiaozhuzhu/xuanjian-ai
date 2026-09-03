@@ -4,8 +4,6 @@ SARIF 2.1.0 输出器单测
 
 import json
 
-import pytest
-
 from fp_sentinel.models import Finding, ScanResult, ScanTool, Severity
 from fp_sentinel.reporting.sarif import to_sarif, SARIF_VERSION, SARIF_SCHEMA_URI, TOOL_NAME
 
@@ -103,6 +101,20 @@ class TestToSarif:
     def test_windows_path_normalized(self):
         r = to_sarif([_make_finding(file_path="src\\app.py")])["runs"][0]["results"][0]
         assert r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "src/app.py"
+
+    def test_preserves_static_preprocessing_location_metadata(self):
+        finding = _make_finding(
+            metadata={
+                "preprocessor": "jsbeautifier",
+                "beautified_line": 245,
+                "original_line_range": "1",
+                "original_offset_hint": {"original_start": 15234, "original_end": 15289},
+            }
+        )
+        result = to_sarif([finding])["runs"][0]["results"][0]
+
+        assert result["properties"]["preprocessing"]["beautifiedLine"] == 245
+        assert result["properties"]["preprocessing"]["originalLineRange"] == "1"
 
 
 class TestCliSarif:

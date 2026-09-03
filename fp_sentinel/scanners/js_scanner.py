@@ -19,6 +19,7 @@ from typing import List, Dict, Any, Optional
 from .base import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
 from ..rules.js import JS_SECURITY_RULES, JS_SECURITY_GUARD_PATTERNS
+from ..preprocessors import looks_heavily_obfuscated, preprocess_javascript
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,10 @@ class JSScanner(BaseScanner):
         self.check_dependencies = self.config.get("check_dependencies", True)
         self.check_secrets = self.config.get("check_hardcoded_secrets", True)
         self.ast_analysis = self.config.get("ast_analysis", False)
+        self.preprocess_minified = self.config.get("preprocess_minified", True)
         self._file_cache: Dict[str, str] = {}
+        self._preprocess_cache: Dict[str, Any] = {}
+        self._preprocess_warnings: List[str] = []
 
     def get_tool_type(self) -> ScanTool:
         return ScanTool.JS_SCANNER
@@ -86,6 +90,7 @@ class JSScanner(BaseScanner):
     ) -> List[ScanResult]:
         """扫描目标路径的 JS/TS 文件"""
         results = []
+        self._preprocess_warnings.clear()
         target = Path(target_path)
 
         if target.is_file():
@@ -115,6 +120,10 @@ class JSScanner(BaseScanner):
         logger.info(f"JS Scanner found {len(results)} issues")
         return results
 
+    def get_preprocess_warnings(self) -> List[str]:
+        """Return unique, user-facing static preprocessing warnings from the last scan."""
+        return list(dict.fromkeys(self._preprocess_warnings))
+
     def _collect_js_files(self, directory: Path) -> List[Path]:
         """收集目录中的 JS/TS 文件"""
         files = []
@@ -142,7 +151,7 @@ class JSScanner(BaseScanner):
 
         for file_path in files:
             try:
-                content = self._read_file(file_path)
+                content, preprocess = self._content_for_scan(file_path)
                 if not content:
                     continue
 
@@ -178,21 +187,23 @@ class JSScanner(BaseScanner):
                                     )
                                     continue
 
+                                metadata = {
+                                    "category": rule.category,
+                                    "confidence": rule.confidence,
+                                    "scanner": "js_scanner",
+                                }
+                                metadata.update(preprocess.location_metadata(line_num))
                                 results.append(ScanResult(
                                     tool=ScanTool.JS_SCANNER,
                                     rule_id=rule.rule_id,
                                     file=str(file_path),
-                                    line=line_num,
+                                    line=1 if preprocess.used_beautifier else line_num,
                                     code=line.strip()[:200],
                                     severity=SEVERITY_MAP.get(rule.severity, Severity.MEDIUM),
                                     message=rule.description,
                                     cwe=rule.cwe,
                                     owasp=rule.owasp,
-                                    metadata={
-                                        "category": rule.category,
-                                        "confidence": rule.confidence,
-                                        "scanner": "js_scanner",
-                                    },
+                                    metadata=metadata,
                                 ))
                     except Exception as e:
                         # per-rule 容错：坏规则只影响自身
@@ -258,7 +269,7 @@ class JSScanner(BaseScanner):
 
         for file_path in files:
             try:
-                content = self._read_file(file_path)
+                content, preprocess = self._content_for_scan(file_path)
                 if not content:
                     continue
 
@@ -276,21 +287,23 @@ class JSScanner(BaseScanner):
                             if entropy < 3.0 and secret_name == "ip_address":
                                 continue  # 低熵IP地址跳过
 
+                            metadata = {
+                                "category": "SECRETS",
+                                "confidence": min(entropy / 5.0, 1.0),
+                                "entropy": entropy,
+                                "scanner": "js_scanner",
+                            }
+                            metadata.update(preprocess.location_metadata(line_num))
                             results.append(ScanResult(
                                 tool=ScanTool.JS_SCANNER,
                                 rule_id=f"js.secrets.{secret_name}",
                                 file=str(file_path),
-                                line=line_num,
+                                line=1 if preprocess.used_beautifier else line_num,
                                 code=stripped[:200],
                                 severity=severity,
                                 message=f"Potential {secret_name.replace('_', ' ')} detected",
                                 cwe="CWE-798",
-                                metadata={
-                                    "category": "SECRETS",
-                                    "confidence": min(entropy / 5.0, 1.0),
-                                    "entropy": entropy,
-                                    "scanner": "js_scanner",
-                                },
+                                metadata=metadata,
                             ))
             except Exception as e:
                 logger.error(f"Error scanning secrets in {file_path}: {e}")
@@ -343,6 +356,28 @@ class JSScanner(BaseScanner):
             logger.error(f"npm audit failed: {e}")
 
         return results
+
+    def _content_for_scan(self, file_path: Path):
+        """Read a file and apply optional in-memory static preprocessing."""
+        content = self._read_file(file_path)
+        if content is None:
+            return None, None
+        if not self.preprocess_minified:
+            from ..preprocessors import JSPreprocessResult
+
+            return content, JSPreprocessResult(content=content)
+
+        result = preprocess_javascript(content)
+        self._preprocess_cache[str(file_path)] = result
+        if result.warning:
+            warning = f"{file_path}: {result.warning}"
+            self._preprocess_warnings.append(warning)
+            logger.warning(warning)
+        if looks_heavily_obfuscated(content):
+            warning = f"{file_path}: 检测到疑似重度混淆；玄鉴不会动态解包或解密，建议扫描原始源码。"
+            self._preprocess_warnings.append(warning)
+            logger.warning(warning)
+        return result.content, result
 
     def _read_file(self, file_path: Path) -> Optional[str]:
         """读取文件内容（带缓存）"""
