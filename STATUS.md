@@ -1,9 +1,15 @@
 # 玄鉴 XuanJian AI v2.2.3 项目状态报告
 
-**绝对路径**: `C:\Users\lenovo\xuanjian-ai`  
+**绝对路径**: `C:\Users\lenovo\xuanjian-ai`
 **生成时间**: 2026-09-04
 **当前版本**: v2.2.3
 **分支**: `feature/v0.2.0-js-audit-browser`
+
+---
+
+## CI 远程失败可观测性
+
+PR #1 的远程 `fp-sentinel-ci` 在 Python 3.10/3.11/3.12 的单元测试步骤一致失败，但依赖安装和 Ruff 均成功；同一提交在两个本地隔离环境中均通过 `684 passed` 与覆盖率门禁。由于未认证访问不能读取 GitHub Actions 原始日志，工作流已改为通过 `python -m pytest` 执行测试，并无条件上传 JUnit XML 与 coverage XML。下一次远程运行无论成功或失败都可下载对应解释器版本的精确测试报告；报告不纳入仓库。
 
 ---
 
@@ -392,7 +398,7 @@ C:\Users\lenovo\xuanjian-ai\
 
 ---
 
-**文档生成**: AI Assistant  
+**文档生成**: AI Assistant
 **日期**: 2026-09-02
 
 
