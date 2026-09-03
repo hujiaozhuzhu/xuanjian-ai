@@ -10,3 +10,6 @@ build/
 .venv/
 .backups/
 .fp_sentinel/
+.coverage
+htmlcov/
+reports/
