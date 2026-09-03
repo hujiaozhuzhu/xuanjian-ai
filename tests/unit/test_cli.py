@@ -3,6 +3,9 @@ CLI 模块测试
 """
 
 import json
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -56,6 +59,19 @@ class TestCLI:
         """版本命令"""
         result = runner.invoke(app, ["version"])
         assert result.exit_code == 0
+
+    def test_module_entrypoint_runs_without_script_path(self):
+        project_root = Path(__file__).resolve().parents[2]
+        result = subprocess.run(
+            [sys.executable, "-m", "fp_sentinel", "--version"],
+            cwd=project_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert result.returncode == 0
+        assert "fp_sentinel v" in result.stdout
 
     def test_help(self):
         """帮助命令"""

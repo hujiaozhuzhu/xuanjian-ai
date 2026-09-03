@@ -2,6 +2,8 @@
 扫描器管理器单元测试
 """
 
+from unittest.mock import patch
+
 import pytest
 from fp_sentinel.scanners.manager import ScannerManager
 from fp_sentinel.models import ScanTool
@@ -17,6 +19,13 @@ class TestScannerManager:
         """初始化扫描器"""
         available = self.manager.get_available_scanners()
         assert len(available) > 0
+
+    def test_reports_missing_semgrep_to_cli(self):
+        with patch("fp_sentinel.scanners.semgrep_scanner.shutil.which", return_value=None):
+            manager = ScannerManager()
+
+        assert "semgrep" not in manager.get_available_scanners()
+        assert any("fp-sentinel[scanners]" in message for message in manager.get_unavailable_scanner_messages())
 
     def test_detect_language_javascript(self, tmp_path):
         """检测JavaScript项目"""

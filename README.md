@@ -8,11 +8,24 @@
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝
 ```
 
-# 🔍 玄鉴 XuanJian AI v2.2.0
+# 玄鉴 XuanJian AI v2.2.1
 
 > **鉴伪存真，洞察代码风险** — 面向安全研究团队的开源代码审计与红蓝对抗平台
 
-> v2.2.0 聚焦三核能力：攻击可验证、双报告体系、开发者画像。所有攻防验证默认只做本地特征模拟，身份画像默认匿名化。
+> v2.2.1 是基于真实 Windows 用户反馈的稳定性补丁：CLI 在 GBK/CP936 终端安全降级，Semgrep 未安装时明确提示，支持无需 PATH 配置的模块入口。所有攻防验证默认只做本地特征模拟，身份画像默认匿名化。
+
+## Windows 用户注意
+
+Windows 安装后，不依赖 `Scripts` 目录是否已加入 PATH：
+
+```powershell
+python -m fp_sentinel --version
+python -m fp_sentinel scan C:\path\to\project --lang javascript
+```
+
+如需直接使用 `fp-sentinel` 命令，请将当前 Python 环境的 `Scripts` 目录加入 PATH。GBK/CP936 终端会自动使用 `[SCAN]`、`[OK]`、`[WARN]` 等 ASCII 状态标记，不会改动系统代码页。
+
+安装建议：基础安装适用于内置规则；高级 Semgrep 规则使用 `pip install -e ".[scanners]"`；完整安装使用 `pip install -e ".[all]"`。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)

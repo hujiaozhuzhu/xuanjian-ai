@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fp-sentinel"
-version = "2.2.0"
+version = "2.2.1"
 description = "玄鉴 XuanJian AI - 代码审计误报排查 MCP Skill"
 readme = "README.md"
 license = {text = "MIT"}

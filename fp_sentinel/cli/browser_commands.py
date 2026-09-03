@@ -9,10 +9,11 @@ import json
 from typing import Optional
 
 import typer
-from rich.console import Console
 from rich.panel import Panel
 
-console = Console()
+from .terminal import create_console
+
+console = create_console()
 app = typer.Typer(name="browser", help="浏览器自动化 (JSRPC)")
 
 

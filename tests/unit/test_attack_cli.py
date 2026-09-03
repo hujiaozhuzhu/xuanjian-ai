@@ -2,9 +2,6 @@
 A7/A8. CLI 集成测试（--report / --output / attack-purge / 版本号）
 """
 
-from pathlib import Path
-
-import pytest
 from typer.testing import CliRunner
 
 from fp_sentinel.cli import app
@@ -101,9 +98,9 @@ class TestAttackPurge:
 
 
 class TestVersion:
-    def test_version_is_2_2_0(self):
-        assert __version__ == "2.2.0"
+    def test_version_is_2_2_1(self):
+        assert __version__ == "2.2.1"
 
     def test_version_command(self):
         result = runner.invoke(app, ["version"])
-        assert "2.2.0" in result.output
+        assert "2.2.1" in result.output

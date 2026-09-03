@@ -185,5 +185,18 @@ class ScannerManager:
             return [ScanTool.SEMGREP]
 
     def get_available_scanners(self) -> List[str]:
-        """获取可用扫描器列表"""
-        return [tool.value for tool in self.scanners.keys()]
+        """获取已配置且可执行的扫描器列表。"""
+        return [
+            tool.value
+            for tool, scanner in self.scanners.items()
+            if getattr(scanner, "available", True)
+        ]
+
+    def get_unavailable_scanner_messages(self) -> List[str]:
+        """返回已配置但未启用的扫描器提示，供 CLI 在扫描后集中展示。"""
+        return [
+            scanner.unavailable_reason
+            for scanner in self.scanners.values()
+            if getattr(scanner, "available", True) is False
+            and getattr(scanner, "unavailable_reason", None)
+        ]

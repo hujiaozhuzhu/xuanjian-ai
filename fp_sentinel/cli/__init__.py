@@ -13,7 +13,6 @@ from pathlib import Path
 from typing import Optional, List
 
 import typer
-from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
 from rich import box
@@ -23,6 +22,7 @@ from ..config import load_config, expand_db_path
 from ..models import ScanTool, Finding
 from ..scanners import ScannerManager, ResultNormalizer
 from ..database import get_database, ProjectRepo, FindingRepo, FPMarkRepo, ScanHistoryRepo
+from .terminal import create_console
 
 app = typer.Typer(
     name="xuanjian",
@@ -53,7 +53,7 @@ try:
 except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
-console = Console()
+console = create_console()
 logger = logging.getLogger(__name__)
 
 
@@ -160,6 +160,8 @@ def scan(
         findings = normalizer.deduplicate(findings)
 
         console.print(f"[green]✓ 扫描完成[/green]  耗时 {duration:.1f}s  发现 {len(findings)} 个问题\n")
+        for message in manager.get_unavailable_scanner_messages():
+            console.print(f"[yellow][WARN] {message}[/yellow]")
 
         # 输出
         if output_format == "json":

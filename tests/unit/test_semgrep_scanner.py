@@ -2,7 +2,8 @@
 Semgrep 扫描器测试
 """
 
-import pytest
+from unittest.mock import patch
+
 from fp_sentinel.scanners.semgrep_scanner import SemgrepScanner
 from fp_sentinel.models import ScanTool
 
@@ -17,6 +18,13 @@ class TestSemgrepScanner:
     def test_scanner_type(self):
         scanner = SemgrepScanner()
         assert scanner.get_tool_type() == ScanTool.SEMGREP
+
+    def test_missing_semgrep_is_reported_without_raising(self):
+        with patch("fp_sentinel.scanners.semgrep_scanner.shutil.which", return_value=None):
+            scanner = SemgrepScanner()
+
+        assert scanner.available is False
+        assert "fp-sentinel[scanners]" in scanner.unavailable_reason
 
     def test_scanner_default_config(self):
         scanner = SemgrepScanner()
@@ -53,6 +61,13 @@ class TestSemgrepScanner:
         scanner = SemgrepScanner()
         cmd = scanner._build_command("/tmp/test", "java", None, None)
         assert "semgrep" in cmd[0]
+        assert "p/java" in cmd
+
+    def test_build_command_javascript_uses_javascript_rules(self):
+        scanner = SemgrepScanner()
+        cmd = scanner._build_command("/tmp/test", "javascript", None, None)
+        assert "p/javascript" in cmd
+        assert "p/python" not in cmd
 
     def test_generate_id(self):
         scanner = SemgrepScanner()

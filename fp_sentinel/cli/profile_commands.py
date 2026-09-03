@@ -21,7 +21,6 @@ from pathlib import Path
 from typing import Optional
 
 import typer
-from rich.console import Console
 from rich.table import Table
 
 from ..config import expand_db_path, load_config
@@ -44,6 +43,7 @@ from ..reporting.profile_report import (
     save_report,
 )
 from ..scanners import ScannerManager, ResultNormalizer
+from .terminal import create_console
 
 profile_app = typer.Typer(
     name="profile",
@@ -51,7 +51,7 @@ profile_app = typer.Typer(
     add_completion=False,
     no_args_is_help=True,
 )
-console = Console()
+console = create_console()
 
 
 def _setup_logging(verbose: bool) -> None:

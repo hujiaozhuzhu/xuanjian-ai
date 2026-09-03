@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import typer
-from rich.console import Console
+from .terminal import create_console
 
 from ..attack import (
     PocInstance,
@@ -34,7 +34,7 @@ from ..attack.chain_orchestrator import AttackChainReport
 from ..database import get_database
 
 logger = logging.getLogger(__name__)
-console = Console()
+console = create_console()
 
 ATTACK_RECORDS_SQL = """
 CREATE TABLE IF NOT EXISTS attack_poc_records (
