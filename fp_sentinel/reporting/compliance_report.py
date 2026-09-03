@@ -36,6 +36,7 @@ async def compute_trend(
     history_repo: ScanHistoryRepo,
     project_path: str,
     current_scan_id: Optional[str] = None,
+    current_findings: Optional[List[Any]] = None,
 ) -> Dict[str, Any]:
     """
     计算 本次/上次 趋势对比（fingerprint 机制）。
@@ -49,27 +50,32 @@ async def compute_trend(
           "previous_scan_id": str|None, "previous_time": str|None,
         }
     """
-    # 本次 findings
-    current_findings = await finding_repo.list_findings(
-        scan_id=current_scan_id, limit=10000
-    ) if current_scan_id else []
+    # 本次 findings：未持久化扫描由调用方显式传入，避免把空集合误报为“全部已修复”。
+    if current_findings is None:
+        current_findings = await finding_repo.list_findings(
+            scan_id=current_scan_id, limit=10000
+        ) if current_scan_id else []
 
-    # 上一次扫描（同项目、时间早于本次）
-    histories = await history_repo.list_history(limit=200)
+    # 上一次扫描：在数据库中先按项目过滤，再按 timestamp、id 倒序返回。按当前扫描
+    # 在该稳定顺序中的位置取下一条记录，避免同一时间精度下的扫描被错误排除。
+    project_histories = await history_repo.list_history(
+        project_path=project_path, limit=200
+    )
     prev_scan_id = None
     prev_time = None
-    for h in histories:
-        if h.project_path != project_path:
-            continue
-        if current_scan_id and h.scan_id == current_scan_id:
-            continue
-        if current_scan_id:
-            cur = next((x for x in histories if x.scan_id == current_scan_id), None)
-            if cur and h.timestamp and cur.timestamp and h.timestamp >= cur.timestamp:
-                continue
-        prev_scan_id = h.scan_id
-        prev_time = str(h.timestamp)
-        break
+
+    if current_scan_id:
+        for index, history in enumerate(project_histories):
+            if history.scan_id == current_scan_id:
+                if index + 1 < len(project_histories):
+                    previous = project_histories[index + 1]
+                    prev_scan_id = previous.scan_id
+                    prev_time = str(previous.timestamp)
+                break
+    elif project_histories:
+        previous = project_histories[0]
+        prev_scan_id = previous.scan_id
+        prev_time = str(previous.timestamp)
 
     previous_findings: List[Any] = []
     if prev_scan_id:

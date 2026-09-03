@@ -31,9 +31,7 @@ from ..attack import (
 )
 from ..attack.poc_templates import DEFAULT_PARAM, DEFAULT_TARGET
 from ..attack.chain_orchestrator import AttackChainReport
-from ..database import get_database, FindingRepo, ScanHistoryRepo
-from ..reporting.attack_report import generate_attack_report, write_report
-from ..reporting.compliance_report import compute_trend, generate_compliance_report
+from ..database import get_database
 
 logger = logging.getLogger(__name__)
 console = Console()

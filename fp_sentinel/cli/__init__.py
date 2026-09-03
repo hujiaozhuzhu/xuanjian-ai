@@ -7,7 +7,6 @@
 
 import asyncio
 import json
-import sys
 import time
 import logging
 from pathlib import Path
@@ -21,7 +20,7 @@ from rich import box
 
 from .. import __version__
 from ..config import load_config, expand_db_path
-from ..models import ScanResult, ScanTool, Finding, Severity
+from ..models import ScanTool, Finding
 from ..scanners import ScannerManager, ResultNormalizer
 from ..database import get_database, ProjectRepo, FindingRepo, FPMarkRepo, ScanHistoryRepo
 
@@ -55,6 +54,7 @@ except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 def _version_callback(value: bool) -> None:
@@ -293,15 +293,9 @@ async def _generate_reports(
     """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二）"""
     from pathlib import Path as _Path
 
-    from ..attack import POC_TEMPLATES, generate_poc
-    from ..attack.exploitability import assess
-    from ..attack.chain_orchestrator import orchestrate, node_id
-    from ..attack.poc_templates import DEFAULT_PARAM, DEFAULT_TARGET
-    from ..attack.target_validator import verify
-    from ..cli.attack_commands import build_attack_data, save_attack_records, vuln_type_for_rule
+    from ..cli.attack_commands import build_attack_data, save_attack_records
     from ..reporting.compliance_report import compute_trend, generate_compliance_report
     from ..reporting.attack_report import generate_attack_report, write_report
-    from datetime import datetime, timezone
 
     project_name = _Path(project_path).name
     out = _Path(output_dir).resolve()
@@ -314,7 +308,11 @@ async def _generate_reports(
 
         if report_kind in ("compliance", "all"):
             trend = await compute_trend(
-                finding_repo, history_repo, project_path, current_scan_id=scan_id,
+                finding_repo,
+                history_repo,
+                project_path,
+                current_scan_id=scan_id,
+                current_findings=findings,
             )
             content = generate_compliance_report(
                 project=project_name,
@@ -418,7 +416,7 @@ def mark(
                 raise typer.Exit(1)
 
             # 创建标记
-            mark_obj = await fp_repo.create(
+            await fp_repo.create(
                 finding_id=finding_id,
                 reason=reason,
                 marked_by=marked_by,

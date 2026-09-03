@@ -2,10 +2,7 @@
 A6-2. 合规报告测试（趋势 / fingerprint 对比 / ROI / Diff 块）
 """
 
-import pytest
-
 from fp_sentinel.database import get_database, FindingRepo, ScanHistoryRepo
-from fp_sentinel.database.repositories import FindingRepo, ScanHistoryRepo
 from fp_sentinel.models import Finding, Severity
 from fp_sentinel.reporting.compliance_report import (
     compute_trend,
@@ -74,6 +71,39 @@ class TestTrend:
             assert new_fps == {"fp3"}
             assert fixed_fps == {"fp1"}
             assert remain_fps == {"fp2"}
+
+    async def test_uses_project_history_beyond_global_limit(self, tmp_path):
+        """项目历史必须在数据库层过滤，不能被其他项目的记录截断。"""
+        async with get_database(str(tmp_path / "t.db")) as db:
+            fr = FindingRepo(db)
+            hr = ScanHistoryRepo(db)
+            first = await hr.create(project_path="proj", scanner="test")
+            await fr.bulk_create([_mk_finding("fp1", "py.injection.sql")], scan_id=first.scan_id)
+            for _ in range(201):
+                await hr.create(project_path="other", scanner="test")
+            second = await hr.create(project_path="proj", scanner="test")
+            await fr.bulk_create([_mk_finding("fp2", "py.xss.dom")], scan_id=second.scan_id)
+
+            trend = await compute_trend(fr, hr, "proj", current_scan_id=second.scan_id)
+
+            assert trend["is_baseline"] is False
+            assert {f.fingerprint for f in trend["new"]} == {"fp2"}
+            assert {f.fingerprint for f in trend["fixed"]} == {"fp1"}
+
+    async def test_uses_supplied_findings_when_scan_is_not_saved(self, tmp_path):
+        """未持久化扫描仍应与最近一次历史结果做正确的趋势比较。"""
+        async with get_database(str(tmp_path / "t.db")) as db:
+            fr = FindingRepo(db)
+            hr = ScanHistoryRepo(db)
+            previous = await hr.create(project_path="proj", scanner="test")
+            await fr.bulk_create([_mk_finding("fp1", "py.injection.sql")], scan_id=previous.scan_id)
+            current = [_mk_finding("fp2", "py.xss.dom")]
+
+            trend = await compute_trend(fr, hr, "proj", current_findings=current)
+
+            assert trend["is_baseline"] is False
+            assert {f.fingerprint for f in trend["new"]} == {"fp2"}
+            assert {f.fingerprint for f in trend["fixed"]} == {"fp1"}
 
 
 class TestReportContent:

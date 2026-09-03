@@ -4,10 +4,8 @@
 管理 Playwright 浏览器实例的创建、配置和销毁
 """
 
-import asyncio
 import logging
-from typing import Optional, Dict, Any
-from pathlib import Path
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 

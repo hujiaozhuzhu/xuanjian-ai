@@ -5,7 +5,6 @@
 支持自动迭代直至收敛或达到最大轮次
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -13,8 +12,8 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-from .generator import RedTeamGenerator, BypassCase, GenerationResult, DifficultyLevel
-from ..rules.js import JS_SECURITY_RULES, JS_RULES_INDEX
+from .generator import RedTeamGenerator, BypassCase
+from ..rules.js import JS_RULES_INDEX
 
 logger = logging.getLogger(__name__)
 
@@ -170,7 +169,6 @@ class AdversarialLoop:
         Returns:
             AdversarialResult: 对抗结果
         """
-        import time
         start = time.time()
 
         # 获取规则信息

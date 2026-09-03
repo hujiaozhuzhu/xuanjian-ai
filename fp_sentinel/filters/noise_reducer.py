@@ -10,9 +10,8 @@ L4 智能降噪: LLM边界判断 (仅边界案例，< 10次调用/扫描)
 import re
 import hashlib
 import logging
-from typing import List, Dict, Any, Optional, Set
-from dataclasses import dataclass, field
-from pathlib import Path
+from typing import List, Dict, Any, Set
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +332,6 @@ class NoiseReducerL3:
     def _compute_fingerprint(self, finding) -> str:
         """计算发现的指纹"""
         file_path = getattr(finding, 'file_path', '') or getattr(finding, 'file', '')
-        line = getattr(finding, 'line_start', 0) or getattr(finding, 'line', 0)
         code = getattr(finding, 'code_snippet', '') or getattr(finding, 'code', '')
         rule_id = getattr(finding, 'rule_id', '')
 

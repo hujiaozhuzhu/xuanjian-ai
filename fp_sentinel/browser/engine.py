@@ -4,7 +4,6 @@ JSRPC 核心引擎
 整合浏览器管理、脚本注入、RPC 通信，提供统一的 API
 """
 
-import asyncio
 import logging
 import uuid
 from typing import Dict, List, Any, Optional

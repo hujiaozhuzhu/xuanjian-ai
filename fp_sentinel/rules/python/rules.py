@@ -4,7 +4,7 @@ Python 安全规则库 (20条)
 覆盖 OWASP Top 10 高危场景
 """
 
-from typing import List, Dict, Any
+from typing import List, Dict
 
 
 class PythonRule:

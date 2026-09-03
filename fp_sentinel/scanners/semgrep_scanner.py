@@ -7,7 +7,6 @@ Semgrep 扫描器
 import asyncio
 import json
 import logging
-import subprocess
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
 from ..models import ScanResult, ScanTool, Severity

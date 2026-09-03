@@ -453,6 +453,7 @@ class ScanHistoryRepo:
     async def list_history(
         self,
         project_id: Optional[str] = None,
+        project_path: Optional[str] = None,
         scanner: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
@@ -463,11 +464,14 @@ class ScanHistoryRepo:
         if project_id:
             clauses.append("project_id = ?")
             params.append(project_id)
+        if project_path:
+            clauses.append("project_path = ?")
+            params.append(project_path)
         if scanner:
             clauses.append("scanner = ?")
             params.append(scanner)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        query = f"SELECT * FROM scan_history{where} ORDER BY timestamp DESC LIMIT ? OFFSET ?"
+        query = f"SELECT * FROM scan_history{where} ORDER BY timestamp DESC, id DESC LIMIT ? OFFSET ?"
         params.extend([limit, offset])
 
         cursor = await self.db.conn.execute(query, params)

@@ -12,11 +12,10 @@ JavaScript/TypeScript 上下文分析器
 import re
 import logging
 from pathlib import Path
-from typing import Dict, List, Any, Optional, Tuple
-from functools import lru_cache
+from typing import Dict, List, Any, Optional
 
 from ..models import (
-    ScanResult, ContextAnalysisResult, JSAnalysisResult,
+    ScanResult, JSAnalysisResult,
     FilterResult, FilterReason, Verdict, Severity,
 )
 from ..rules.js import JS_SECURITY_GUARD_PATTERNS, FRAMEWORK_PATTERNS

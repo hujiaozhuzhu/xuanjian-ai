@@ -16,19 +16,17 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from enum import Enum
 
 from pydantic import BaseModel, Field
 
 from ..analysis.chain_discovery import (
-    AttackChain,
     EdgeType,
     GraphEdge,
     GraphNode,
     NodeType,
     VulnerabilityGraph,
 )
-from .exploitability import ExploitabilityResult, assess
+from .exploitability import ExploitabilityResult
 
 logger = logging.getLogger(__name__)
 

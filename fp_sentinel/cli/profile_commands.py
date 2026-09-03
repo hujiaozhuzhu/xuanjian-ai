@@ -24,14 +24,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .. import __version__
 from ..config import expand_db_path, load_config
 from ..database import FindingRepo, ScanHistoryRepo, ProjectRepo, get_database
 from ..models import ScanTool
 from ..profile.attribution import attribute_and_store
 from ..profile.analyzer import build_team_profile
 from ..profile.models import (
-    UNKNOWN_ALIAS,
     ProfileRepo,
     alias_hash,
     ensure_profile_tables,
@@ -44,7 +42,6 @@ from ..reporting.profile_report import (
     generate_personal_report,
     generate_team_report,
     save_report,
-    validate_output_path,
 )
 from ..scanners import ScannerManager, ResultNormalizer
 
@@ -281,8 +278,6 @@ def profile_scan(
             project_repo = ProjectRepo(db)
             finding_repo = FindingRepo(db)
             history_repo = ScanHistoryRepo(db)
-            profile_repo = ProfileRepo(db)
-
             project = await project_repo.get_or_create(
                 name=Path(project_path).name, path=project_path, language=language
             )

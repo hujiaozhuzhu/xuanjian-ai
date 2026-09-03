@@ -18,7 +18,7 @@ from typing import List, Dict, Any, Optional
 
 from .base import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
-from ..rules.js import JS_SECURITY_RULES, JS_RULES_INDEX, JS_SECURITY_GUARD_PATTERNS
+from ..rules.js import JS_SECURITY_RULES, JS_SECURITY_GUARD_PATTERNS
 
 logger = logging.getLogger(__name__)
 

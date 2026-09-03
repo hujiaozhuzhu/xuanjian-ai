@@ -11,7 +11,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Set, Tuple
+from typing import Optional, Dict, Any, Tuple
 from ..models import ScanResult, FilterResult, FilterReason, Verdict
 from ..utils.fingerprint import compute_fingerprint
 
@@ -136,7 +136,6 @@ class BaselineFilter:
 
     def _fuzzy_match(self, scan_result: ScanResult) -> Tuple[bool, float]:
         """模糊匹配：同规则 + 同路径 + 代码相似度"""
-        path_fp = self._compute_path_fingerprint(scan_result)
         best_conf = 0.0
 
         for fp_key, entry in self._fingerprints.items():

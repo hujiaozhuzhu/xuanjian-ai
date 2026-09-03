@@ -7,7 +7,7 @@
 import time
 import logging
 import psutil
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any
 from pathlib import Path
 from dataclasses import dataclass, field
 
@@ -67,8 +67,6 @@ class BenchmarkRunner:
 
         # 监控资源
         process = psutil.Process()
-        memory_samples = []
-        cpu_samples = []
 
         # 运行扫描
         start_time = time.time()

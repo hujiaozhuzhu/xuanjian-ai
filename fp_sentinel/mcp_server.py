@@ -28,9 +28,8 @@ from typing import List, Optional, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 from .models import (
-    ScanResult, FilterResult, FilterResponse, FilterStatistics,
-    Verdict, ScanTool, Severity, Finding,
-    scan_result_to_finding,
+    ScanResult, FilterResult, FilterStatistics,
+    Verdict, ScanTool,
 )
 from .filters import RuleFilter, ContextFilter, BaselineFilter
 from .scanners.manager import ScannerManager
@@ -102,7 +101,8 @@ class MCPAuditServer:
             Returns:
                 JSON 格式的扫描结果（含 scan_id、统计信息）
             """
-            import uuid, time
+            import uuid
+            import time
             from datetime import datetime, timezone
 
             scan_id = str(uuid.uuid4())
@@ -377,7 +377,7 @@ class MCPAuditServer:
                 f"- **语言**: {scan.get('language')}",
                 f"- **时间**: {scan.get('completed_at')}", "",
                 "## 统计", "",
-                f"| 指标 | 数值 |", f"|------|------|",
+                "| 指标 | 数值 |", "|------|------|",
                 f"| 总发现 | {stats.total} |",
                 f"| 误报 | {stats.false_positives} |",
                 f"| 疑似误报 | {stats.likely_false_positives} |",

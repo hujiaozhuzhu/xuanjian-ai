@@ -5,10 +5,8 @@ Java 专用安全扫描，通过 SpotBugs + FindSecBugs 插件进行字节码分
 """
 
 import asyncio
-import json
 import logging
 import os
-import subprocess
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
@@ -194,7 +192,7 @@ class FindSecBugsScanner(BaseScanner):
 
     def _get_report_path(self, target_path: str) -> str:
         """获取报告输出路径"""
-        return f"/tmp/fp_sentinel_findsecbugs_report.xml"
+        return "/tmp/fp_sentinel_findsecbugs_report.xml"
 
     def _parse_xml_report(
         self, report_path: str, source_path: Optional[str]

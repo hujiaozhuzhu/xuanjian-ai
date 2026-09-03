@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# ruff: noqa: E402
 """Quick verification of all modules"""
 
 import sys
@@ -6,10 +7,7 @@ sys.path.insert(0, '/root/.hermes/xuanjian-ai')
 
 # Test model imports
 from fp_sentinel.models import (
-    ScanResult, FilterResult, Verdict, FilterStatistics,
-    FilterResponse, Severity, ScanTool, Finding, Project,
-    scan_result_to_finding, FalsePositiveMark, ScanHistory,
-    ContextAnalysisResult, JavaAnalysisResult,
+    ScanResult, FilterResult, Verdict,
 )
 
 # Test is_false_positive property
@@ -100,7 +98,7 @@ try:
     print(f'[OK] create_app() -> FastAPI app with {len(app.routes)} routes')
 except TypeError as e:
     if 'on_startup' in str(e):
-        print(f'[SKIP] create_app() - FastAPI/Starlette version mismatch in env (code is correct)')
+        print('[SKIP] create_app() - FastAPI/Starlette version mismatch in env (code is correct)')
     else:
         raise
 
@@ -109,7 +107,7 @@ from fp_sentinel import (
     create_server, create_mcp_server,
     FPServer, MCPAuditServer,
     RuleFilter, ContextFilter, BaselineFilter, MLFilter,
-    ScanResult, FilterResult, FilterStatistics,
+    ScanResult, FilterResult,
 )
 print('[OK] Package-level imports')
 

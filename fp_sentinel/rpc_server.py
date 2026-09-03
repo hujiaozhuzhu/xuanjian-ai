@@ -5,7 +5,6 @@ JSRPC 服务器
 支持远程函数调用、密钥捕获、实时数据推送
 """
 
-import asyncio
 import json
 import logging
 from typing import Dict, Set, Any, Optional
@@ -56,7 +55,6 @@ class RPCServer:
 
     def _setup_routes(self):
         """设置路由"""
-        from aiohttp import web
 
         # HTTP API
         self._app.router.add_post("/call", self._handle_call)

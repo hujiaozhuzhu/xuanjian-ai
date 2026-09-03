@@ -6,12 +6,10 @@
 
 import asyncio
 import json
-import logging
 from typing import Optional
 
 import typer
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 
 console = Console()
@@ -47,7 +45,7 @@ def start(
 
         if url:
             result = await engine.navigate(session.session_id, url)
-            console.print(f"\n[bold]导航结果:[/bold]")
+            console.print("\n[bold]导航结果:[/bold]")
             console.print(f"  URL: {result.get('url')}")
             console.print(f"  标题: {result.get('title')}")
             console.print(f"  状态: {result.get('status')}")

@@ -17,7 +17,7 @@ import subprocess
 from bisect import bisect_left
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from ..models import Finding
 from .models import (

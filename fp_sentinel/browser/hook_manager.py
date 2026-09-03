@@ -8,7 +8,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from ..models import HookConfig, HookType
+from ..models import HookConfig
 
 logger = logging.getLogger(__name__)
 

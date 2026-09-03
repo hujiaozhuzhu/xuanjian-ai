@@ -4,7 +4,7 @@ JavaScript 安全模式定义
 定义 JS 特有的安全检测模式，用于上下文分析和误报过滤
 """
 
-from typing import Dict, List, Any
+from typing import Dict, List
 
 
 # ─────────────────────── 数据源 (Sources) ───────────────────────

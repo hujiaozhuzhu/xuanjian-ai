@@ -18,7 +18,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
 
 from ..attack.chain_orchestrator import AttackChainReport
 from ..attack.exploitability import ExploitabilityResult
@@ -317,8 +316,8 @@ def generate_attack_report(
         "仅用于验证漏洞可达性与培训演练，严禁用于任何未授权测试。\n"
         "- 所有验证默认为特征匹配模拟（simulated），零网络请求；"
         "本地目标白名单校验（仅 127.0.0.1/localhost）强制开启。\n"
-        f"- **30 天数据清理**：依据 S5 红线，PoC 与攻防数据保留 30 天，"
-        f"到期请执行 `fp-sentinel attack-purge` 清理。"
+        "- **30 天数据清理**：依据 S5 红线，PoC 与攻防数据保留 30 天，"
+        "到期请执行 `fp-sentinel attack-purge` 清理。"
     )
 
     return "\n".join(sections) + "\n"

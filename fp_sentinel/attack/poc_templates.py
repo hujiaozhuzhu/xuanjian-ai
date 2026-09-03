@@ -15,8 +15,7 @@ import base64
 import hashlib
 import hmac
 import json
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Optional
 from urllib.parse import urlparse
 
@@ -603,7 +602,7 @@ def generate_poc(
     }
     try:
         rendered = template.payload_template.format(**variables)
-    except (KeyError, IndexError, ValueError) as e:
+    except (KeyError, IndexError, ValueError):
         # 模板中存在字面花括号且未转义时退化为逐键替换
         rendered = template.payload_template
         for k, v in variables.items():
