@@ -50,7 +50,8 @@ class TestToSarif:
         assert r["ruleIndex"] == 0
         assert r["level"] == "error"
         assert r["message"]["text"] == "SQL 注入风险"
-        loc = r["physicalLocation"]
+        assert "physicalLocation" not in r
+        loc = r["locations"][0]["physicalLocation"]
         assert loc["artifactLocation"]["uri"] == "app.py"
         assert loc["region"]["startLine"] == 24
         props = r["properties"]
@@ -93,7 +94,7 @@ class TestToSarif:
         )
         r = to_sarif([sr])["runs"][0]["results"][0]
         assert r["ruleId"] == "py.deserialization.yaml"
-        assert r["physicalLocation"]["region"]["startLine"] == 141
+        assert r["locations"][0]["physicalLocation"]["region"]["startLine"] == 141
 
     def test_fingerprint_partial(self):
         r = to_sarif([_make_finding()])["runs"][0]["results"][0]
@@ -101,7 +102,7 @@ class TestToSarif:
 
     def test_windows_path_normalized(self):
         r = to_sarif([_make_finding(file_path="src\\app.py")])["runs"][0]["results"][0]
-        assert r["physicalLocation"]["artifactLocation"]["uri"] == "src/app.py"
+        assert r["locations"][0]["physicalLocation"]["artifactLocation"]["uri"] == "src/app.py"
 
 
 class TestCliSarif:

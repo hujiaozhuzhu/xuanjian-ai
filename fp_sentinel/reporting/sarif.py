@@ -95,10 +95,14 @@ def _build_result(r: Any, rule_index: Dict[str, int]) -> Dict[str, Any]:
         "ruleIndex": rule_index.get(rid, 0),
         "level": SEVERITY_TO_LEVEL.get(severity, "warning"),
         "message": {"text": message},
-        "physicalLocation": {
-            "artifactLocation": {"uri": file_path.replace("\\", "/")},
-            "region": {"startLine": int(line)},
-        },
+        "locations": [
+            {
+                "physicalLocation": {
+                    "artifactLocation": {"uri": file_path.replace("\\", "/")},
+                    "region": {"startLine": int(line)},
+                }
+            }
+        ],
         "properties": {
             "cvss": SEVERITY_TO_CVSS.get(severity, 5.0),
             "confidence": float(_get(r, "confidence", 0.0) or 0.0),
