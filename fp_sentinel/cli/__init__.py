@@ -104,6 +104,9 @@ def scan(
     scanners: Optional[str] = typer.Option(None, "--scanner", "-s", help="指定扫描器 (逗号分隔: semgrep,bandit,findsecbugs)"),
     config_file: Optional[str] = typer.Option(None, "--config", "-c", help="YAML 配置文件路径"),
     output_format: str = typer.Option("table", "--format", "-f", help="输出格式 (table/json/sarif)"),
+    results_file: Optional[str] = typer.Option(
+        None, "--results-file", help="JSON 或 SARIF 结构化结果文件路径"
+    ),
     report: str = typer.Option(
         "compliance", "--report",
         help="生成报告类型 (compliance/attack/all/none)，默认 compliance 向后兼容",
@@ -165,6 +168,9 @@ def scan(
             _output_sarif(findings)
         else:
             _output_table(findings)
+
+        if results_file:
+            _write_structured_results(findings, output_format, results_file)
 
         # 保存到数据库
         scan_id = None
@@ -237,6 +243,26 @@ def _output_sarif(findings: List[Finding]) -> None:
 
     sarif = to_sarif(findings)
     console.print_json(json.dumps(sarif, ensure_ascii=False, default=str))
+
+
+def _write_structured_results(
+    findings: List[Finding], output_format: str, results_file: str
+) -> None:
+    """将 JSON/SARIF 结果写入显式指定的文件，不复用报告目录参数。"""
+    if output_format not in ("json", "sarif"):
+        raise typer.BadParameter("--results-file 仅支持 --format json 或 sarif")
+
+    path = Path(results_file)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload: object
+    if output_format == "sarif":
+        from ..reporting.sarif import to_sarif
+
+        payload = to_sarif(findings)
+    else:
+        payload = [finding.model_dump(mode="json") for finding in findings]
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    console.print(f"[dim]结构化结果已写入: {path}[/dim]")
 
 
 def _truncate(s: str, max_len: int) -> str:

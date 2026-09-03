@@ -2,12 +2,51 @@
 CLI 模块测试
 """
 
+import json
+
 import pytest
 from typer.testing import CliRunner
-from fp_sentinel.cli import app
+
+from fp_sentinel.cli import _write_structured_results, app
+from fp_sentinel.models import Finding, Severity
 
 
 runner = CliRunner()
+
+
+def _finding() -> Finding:
+    return Finding(
+        scanner="python_scanner",
+        rule_id="py.injection.sql",
+        severity=Severity.HIGH,
+        file_path="app.py",
+        line_start=10,
+        code_snippet="query = user_input",
+        fingerprint="test-fingerprint",
+    )
+
+
+class TestStructuredResults:
+    def test_writes_json_results_file(self, tmp_path):
+        output = tmp_path / "results.json"
+
+        _write_structured_results([_finding()], "json", str(output))
+
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data[0]["rule_id"] == "py.injection.sql"
+
+    def test_writes_sarif_results_file(self, tmp_path):
+        output = tmp_path / "results.sarif"
+
+        _write_structured_results([_finding()], "sarif", str(output))
+
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data["version"] == "2.1.0"
+        assert data["runs"][0]["results"][0]["ruleId"] == "py.injection.sql"
+
+    def test_rejects_non_structured_results_file(self, tmp_path):
+        with pytest.raises(Exception, match="results-file"):
+            _write_structured_results([_finding()], "table", str(tmp_path / "results.txt"))
 
 
 class TestCLI:
