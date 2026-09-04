@@ -4,8 +4,17 @@
 提供漏洞代码片段、安全代码片段、绕过变体等测试数据
 """
 
+import re
+
 import pytest
-from pathlib import Path
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def plain_cli_output(output: str) -> str:
+    """Remove terminal styling before asserting CLI help text."""
+    return ANSI_ESCAPE_RE.sub("", output)
 
 
 # ─────────────────────── JS 漏洞代码片段 ───────────────────────
@@ -434,7 +443,7 @@ const API_KEY = "sk-1234567890abcdef";
 element.textContent = userInput;
 const data = JSON.parse(userInput);
 """
-    file_path = code_dir / "vulnerable.js"
+    file_path = tmp_code_dir / "vulnerable.js"
     file_path.write_text(content)
     return file_path
 
@@ -460,6 +469,6 @@ const el = document.createElement("div");
 // Safe: parseInt
 const num = parseInt(userInput);
 """
-    file_path = code_dir / "safe.js"
+    file_path = tmp_code_dir / "safe.js"
     file_path.write_text(content)
     return file_path

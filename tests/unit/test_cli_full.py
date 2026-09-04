@@ -2,8 +2,9 @@
 CLI 完整测试
 """
 
-import pytest
 from typer.testing import CliRunner
+
+from tests.conftest import plain_cli_output
 from fp_sentinel.cli import app
 
 
@@ -24,7 +25,7 @@ class TestCLIFull:
     def test_scan_help(self):
         result = runner.invoke(app, ["scan", "--help"])
         assert result.exit_code == 0
-        assert "--lang" in result.output
+        assert "--lang" in plain_cli_output(result.output)
 
     def test_list_help(self):
         result = runner.invoke(app, ["list", "--help"])

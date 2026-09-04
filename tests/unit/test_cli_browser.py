@@ -2,9 +2,9 @@
 CLI 浏览器命令测试
 """
 
-import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
 from typer.testing import CliRunner
+
+from tests.conftest import plain_cli_output
 from fp_sentinel.cli.browser_commands import app as browser_app
 
 
@@ -58,16 +58,17 @@ class TestCLIBrowserCommands:
         """带URL的启动帮助"""
         result = runner.invoke(browser_app, ["start", "--help"])
         assert result.exit_code == 0
-        assert "--url" in result.output or "--headless" in result.output
+        output = plain_cli_output(result.output)
+        assert "--url" in output or "--headless" in output
 
     def test_call_with_func_help(self):
         """带函数的调用帮助"""
         result = runner.invoke(browser_app, ["call", "--help"])
         assert result.exit_code == 0
-        assert "--args" in result.output
+        assert "--args" in plain_cli_output(result.output)
 
     def test_hook_with_type_help(self):
         """带类型的Hook帮助"""
         result = runner.invoke(browser_app, ["hook", "--help"])
         assert result.exit_code == 0
-        assert "--type" in result.output
+        assert "--type" in plain_cli_output(result.output)

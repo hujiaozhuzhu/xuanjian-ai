@@ -2,7 +2,7 @@
 A4. 靶场验证器测试（诚实三态）
 """
 
-from pathlib import Path
+import pytest
 
 from fp_sentinel.attack.target_validator import (
     VerifyStatus,

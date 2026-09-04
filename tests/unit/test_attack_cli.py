@@ -4,6 +4,7 @@ A7/A8. CLI 集成测试（--report / --output / attack-purge / 版本号）
 
 from typer.testing import CliRunner
 
+from tests.conftest import plain_cli_output
 from fp_sentinel.cli import app
 from fp_sentinel import __version__
 
@@ -14,8 +15,9 @@ class TestScanReportOption:
     def test_scan_report_help(self):
         result = runner.invoke(app, ["scan", "--help"])
         assert result.exit_code == 0
-        assert "--report" in result.output
-        assert "--output" in result.output
+        output = plain_cli_output(result.output)
+        assert "--report" in output
+        assert "--output" in output
 
     def test_scan_invalid_report_kind(self, tmp_path):
         (tmp_path / "app.py").write_text("x = 1\n")
@@ -60,7 +62,7 @@ class TestAttackPurge:
     def test_attack_purge_registered(self):
         result = runner.invoke(app, ["attack-purge", "--help"])
         assert result.exit_code == 0
-        assert "--days" in result.output
+        assert "--days" in plain_cli_output(result.output)
 
     def test_attack_subcommand_registered(self):
         result = runner.invoke(app, ["attack", "--help"])
