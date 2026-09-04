@@ -1,7 +1,7 @@
 """
 MCP 服务器（FastMCP 装饰器模式）
 
-8 个 MCP 工具：
+16 个 MCP 工具：
 1. scan_project        - 扫描项目
 2. triage_findings     - 分诊发现（应用三层过滤）
 3. explain_finding     - 解释单条发现
@@ -10,6 +10,14 @@ MCP 服务器（FastMCP 装饰器模式）
 6. export_report       - 导出报告
 7. get_statistics      - 获取统计
 8. list_projects       - 列出项目
+9. jspy_start          - 启动浏览器实例
+10. jspy_navigate      - 导航到目标URL
+11. jspy_hook          - 注入函数Hook
+12. jspy_call          - 远程调用页面函数
+13. jspy_evaluate      - 执行JS表达式
+14. jspy_trace         - 追踪函数调用链
+15. jspy_extract_keys  - 自动提取加密密钥
+16. jspy_stop          - 关闭浏览器实例
 """
 
 import asyncio
@@ -20,9 +28,8 @@ from typing import List, Optional, Dict, Any
 from mcp.server.fastmcp import FastMCP
 
 from .models import (
-    ScanResult, FilterResult, FilterResponse, FilterStatistics,
-    Verdict, ScanTool, Severity, Finding,
-    scan_result_to_finding,
+    ScanResult, FilterResult, FilterStatistics,
+    Verdict, ScanTool,
 )
 from .filters import RuleFilter, ContextFilter, BaselineFilter
 from .scanners.manager import ScannerManager
@@ -94,7 +101,8 @@ class MCPAuditServer:
             Returns:
                 JSON 格式的扫描结果（含 scan_id、统计信息）
             """
-            import uuid, time
+            import uuid
+            import time
             from datetime import datetime, timezone
 
             scan_id = str(uuid.uuid4())
@@ -369,7 +377,7 @@ class MCPAuditServer:
                 f"- **语言**: {scan.get('language')}",
                 f"- **时间**: {scan.get('completed_at')}", "",
                 "## 统计", "",
-                f"| 指标 | 数值 |", f"|------|------|",
+                "| 指标 | 数值 |", "|------|------|",
                 f"| 总发现 | {stats.total} |",
                 f"| 误报 | {stats.false_positives} |",
                 f"| 疑似误报 | {stats.likely_false_positives} |",
@@ -456,6 +464,260 @@ class MCPAuditServer:
                 seen[p]["total_findings"] += scan.get("stats", {}).get("total", 0)
 
             return json.dumps(list(seen.values()), ensure_ascii=False, indent=2)
+
+    # ─────── JSRPC 浏览器工具 ───────
+
+        # ── 9. jspy_start ──
+        @self.mcp.tool()
+        async def jspy_start(
+            url: Optional[str] = None,
+            headless: bool = True,
+            stealth_mode: bool = True,
+        ) -> str:
+            """
+            启动浏览器实例，用于 JS 逆向工程。
+
+            Args:
+                url: 初始导航URL（可选）
+                headless: 是否无头模式
+                stealth_mode: 是否启用反检测模式
+
+            Returns:
+                JSON 格式的会话信息
+            """
+            try:
+                from .models import BrowserConfig, RPCConfig
+                from .browser.engine import BrowserEngine
+
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    browser_config = BrowserConfig(
+                        headless=headless,
+                        stealth_mode=stealth_mode,
+                    )
+                    rpc_config = RPCConfig(enabled=True)
+                    server._browser_engine = BrowserEngine(browser_config, rpc_config)
+
+                session = await server._browser_engine.start(enable_rpc=True)
+                result = {
+                    "session_id": session.session_id,
+                    "status": session.status,
+                    "rpc_port": server._browser_engine._rpc_config.port,
+                }
+
+                if url:
+                    nav_result = await server._browser_engine.navigate(session.session_id, url)
+                    result["navigation"] = nav_result
+
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 10. jspy_navigate ──
+        @self.mcp.tool()
+        async def jspy_navigate(
+            session_id: str,
+            url: str,
+        ) -> str:
+            """
+            导航到目标URL。
+
+            Args:
+                session_id: 会话ID
+                url: 目标URL
+
+            Returns:
+                JSON 格式的导航结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动，请先调用 jspy_start"}, ensure_ascii=False)
+                result = await server._browser_engine.navigate(session_id, url)
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 11. jspy_hook ──
+        @self.mcp.tool()
+        async def jspy_hook(
+            session_id: str,
+            target: str,
+            hook_type: str = "trace",
+        ) -> str:
+            """
+            注入函数Hook，监控函数调用。
+
+            Args:
+                session_id: 会话ID
+                target: 目标函数路径（如 window.encrypt）
+                hook_type: Hook类型 (trace/before/after/replace)
+
+            Returns:
+                JSON 格式的Hook注入结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+                result = await server._browser_engine.inject_hook(session_id, target, hook_type)
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 12. jspy_call ──
+        @self.mcp.tool()
+        async def jspy_call(
+            session_id: str,
+            func: str,
+            args: Optional[List[Any]] = None,
+        ) -> str:
+            """
+            远程调用页面中的函数。
+
+            Args:
+                session_id: 会话ID
+                func: 函数名
+                args: 参数列表
+
+            Returns:
+                JSON 格式的调用结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+                result = await server._browser_engine.call_function(session_id, func, args or [])
+                return json.dumps(result.model_dump(), ensure_ascii=False, indent=2, default=str)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 13. jspy_evaluate ──
+        @self.mcp.tool()
+        async def jspy_evaluate(
+            session_id: str,
+            expression: str,
+        ) -> str:
+            """
+            在页面中执行JavaScript表达式。
+
+            Args:
+                session_id: 会话ID
+                expression: JS表达式
+
+            Returns:
+                表达式执行结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+                result = await server._browser_engine.evaluate(session_id, expression)
+                return json.dumps({"result": result}, ensure_ascii=False, indent=2, default=str)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 14. jspy_trace ──
+        @self.mcp.tool()
+        async def jspy_trace(
+            session_id: str,
+            target: str,
+            duration_seconds: int = 10,
+        ) -> str:
+            """
+            追踪函数调用链，捕获输入输出。
+
+            Args:
+                session_id: 会话ID
+                target: 目标函数路径
+                duration_seconds: 追踪时长(秒)
+
+            Returns:
+                JSON 格式的调用追踪结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+
+                # 注入 Hook
+                await server._browser_engine.inject_hook(session_id, target, "trace")
+
+                # 等待捕获
+                import asyncio
+                await asyncio.sleep(duration_seconds)
+
+                # 获取捕获的事件
+                events = await server._browser_engine.get_hook_events(session_id)
+                return json.dumps({
+                    "target": target,
+                    "duration_seconds": duration_seconds,
+                    "events_count": len(events),
+                    "events": events,
+                }, ensure_ascii=False, indent=2, default=str)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 15. jspy_extract_keys ──
+        @self.mcp.tool()
+        async def jspy_extract_keys(
+            session_id: str,
+        ) -> str:
+            """
+            自动提取页面中的加密密钥和加密操作。
+
+            Args:
+                session_id: 会话ID
+
+            Returns:
+                JSON 格式的密钥和加密操作信息
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+
+                # 注入加密 Hook
+                await server._browser_engine.inject_crypto_hooks(session_id)
+
+                # 等待捕获
+                import asyncio
+                await asyncio.sleep(3)
+
+                # 获取数据
+                keys = await server._browser_engine.evaluate(
+                    session_id,
+                    "window.__xuanjian_crypto__ ? window.__xuanjian_crypto__.getKeys() : []"
+                )
+                operations = await server._browser_engine.evaluate(
+                    session_id,
+                    "window.__xuanjian_crypto__ ? window.__xuanjian_crypto__.getOperations() : []"
+                )
+
+                session = server._browser_engine.get_session(session_id)
+                return json.dumps({
+                    "session_id": session_id,
+                    "keys": keys,
+                    "operations": operations,
+                    "captured_keys": session.captured_keys if session else [],
+                }, ensure_ascii=False, indent=2, default=str)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+        # ── 16. jspy_stop ──
+        @self.mcp.tool()
+        async def jspy_stop(
+            session_id: str,
+        ) -> str:
+            """
+            关闭浏览器会话。
+
+            Args:
+                session_id: 会话ID
+
+            Returns:
+                JSON 格式的关闭结果
+            """
+            try:
+                if not hasattr(server, '_browser_engine') or server._browser_engine is None:
+                    return json.dumps({"error": "浏览器未启动"}, ensure_ascii=False)
+                await server._browser_engine.close_session(session_id)
+                return json.dumps({"status": "closed", "session_id": session_id}, ensure_ascii=False)
+            except Exception as e:
+                return json.dumps({"error": str(e)}, ensure_ascii=False)
 
     # ─────── 过滤流水线 ───────
 

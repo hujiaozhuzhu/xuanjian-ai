@@ -156,7 +156,7 @@ class Database:
         return False
 
 
-async def get_database(
+def get_database(
     db_path: str = "~/.xuanjian/data.db",
     wal_mode: bool = True,
 ) -> Database:
@@ -173,9 +173,6 @@ async def get_database(
         wal_mode: WAL 模式
 
     Returns:
-        Database: 已连接并初始化的数据库实例
+        Database: 由 async with 初始化和关闭的数据库实例
     """
-    database = Database(db_path, wal_mode)
-    await database.connect()
-    await database.initialize()
-    return database
+    return Database(db_path, wal_mode)

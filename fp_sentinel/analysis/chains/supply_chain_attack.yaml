@@ -1,0 +1,45 @@
+id: CHAIN-009
+name: "第三方库 → 供应链攻击 → 后门植入"
+severity: CRITICAL
+cvss: 9.5
+epss: 0.45
+
+steps:
+  - step: 1
+    name: "依赖漏洞"
+    rule: vulnerable_dependency
+    description: "使用存在漏洞的第三方库"
+    condition: "npm/pip/maven依赖有已知CVE"
+
+  - step: 2
+    name: "供应链攻击"
+    rule: supply_chain
+    description: "恶意包或被劫持的包"
+    condition: "typosquatting或依赖混淆"
+
+  - step: 3
+    name: "后门植入"
+    rule: backdoor
+    description: "在构建过程中植入后门"
+    condition: "postinstall脚本执行恶意代码"
+
+exploit_script: |
+  # Step 1: 检查依赖
+  npm audit
+  pip-audit
+
+  # Step 2: 检查恶意包
+  # 检查是否有typosquatting
+  npm ls | grep -i "suspicious"
+
+  # Step 3: 检查构建脚本
+  cat node_modules/*/package.json | jq '.scripts'
+
+remediation:
+  priority: P0
+  effort: "8小时"
+  suggestions:
+    - "使用lock文件锁定依赖版本"
+    - "定期运行 npm audit / pip-audit"
+    - "使用私有镜像源"
+    - "审查postinstall脚本"

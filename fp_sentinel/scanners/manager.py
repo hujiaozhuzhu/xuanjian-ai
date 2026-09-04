@@ -15,6 +15,9 @@ from ..models import ScanResult, ScanTool
 
 logger = logging.getLogger(__name__)
 
+# JS/TS 文件扩展名
+JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+
 
 class ScannerManager:
     """扫描器管理器"""
@@ -42,6 +45,24 @@ class ScannerManager:
         bandit_config = scanner_configs.get("bandit", {"enabled": True})
         if bandit_config.get("enabled", True):
             self.scanners[ScanTool.BANDIT] = BanditScanner(bandit_config)
+
+        # JS Scanner (JavaScript/TypeScript)
+        try:
+            from .js_scanner import JSScanner
+            js_config = scanner_configs.get("js_scanner", {"enabled": True})
+            if js_config.get("enabled", True):
+                self.scanners[ScanTool.JS_SCANNER] = JSScanner(js_config)
+        except ImportError:
+            logger.debug("JS Scanner not available")
+
+        # Python Scanner (Python 规则正则扫描)
+        try:
+            from .python_scanner import PythonScanner
+            py_config = scanner_configs.get("python_scanner", {"enabled": True})
+            if py_config.get("enabled", True):
+                self.scanners[ScanTool.PY_SCANNER] = PythonScanner(py_config)
+        except ImportError:
+            logger.debug("Python Scanner not available")
 
     async def scan(
         self,
@@ -90,12 +111,26 @@ class ScannerManager:
                 logger.error(f"Scanner failed: {results}")
                 continue
             for r in results:
-                key = f"{r.file}:{r.line}:{r.rule_id}"
+                key = self._result_dedup_key(r)
                 if key not in seen:
                     seen.add(key)
                     all_results.append(r)
 
         return all_results
+
+    @staticmethod
+    def _result_dedup_key(result: ScanResult) -> str:
+        """Keep distinct static locations in a minified bundle from being collapsed."""
+        metadata = result.metadata or {}
+        preprocess_location = metadata.get("original_offset_hint") or {}
+        original_offset = preprocess_location.get("original_start")
+        beautified_line = metadata.get("beautified_line")
+        if original_offset is not None or beautified_line is not None:
+            return (
+                f"{result.file}:{result.rule_id}:"
+                f"offset={original_offset}:formatted={beautified_line}"
+            )
+        return f"{result.file}:{result.line}:{result.rule_id}"
 
     def _detect_language(self, target_path: str) -> str:
         """自动检测项目语言"""
@@ -116,6 +151,10 @@ class ScannerManager:
             return "python"
         if os.path.exists(os.path.join(target_path, "go.mod")):
             return "go"
+        if os.path.exists(os.path.join(target_path, "package.json")):
+            return "javascript"
+        if os.path.exists(os.path.join(target_path, "tsconfig.json")):
+            return "typescript"
 
         # 按文件扩展名统计
         ext_count = {}
@@ -123,6 +162,13 @@ class ScannerManager:
             for f in files:
                 ext = os.path.splitext(f)[1].lower()
                 ext_count[ext] = ext_count.get(ext, 0) + 1
+
+        # JavaScript/TypeScript 检测
+        js_count = sum(ext_count.get(ext, 0) for ext in JS_EXTENSIONS)
+        if js_count > 0 and js_count >= ext_count.get(".java", 0):
+            if ext_count.get(".ts", 0) > 0 or ext_count.get(".tsx", 0) > 0:
+                return "typescript"
+            return "javascript"
 
         if ext_count.get(".java", 0) > ext_count.get(".py", 0):
             return "java"
@@ -138,12 +184,42 @@ class ScannerManager:
         if language == "java":
             return [ScanTool.SEMGREP, ScanTool.FINDSECBUGS]
         elif language == "python":
-            return [ScanTool.SEMGREP, ScanTool.BANDIT]
+            tools = [ScanTool.SEMGREP, ScanTool.BANDIT]
+            if ScanTool.PY_SCANNER in self.scanners:
+                tools.append(ScanTool.PY_SCANNER)
+            return tools
+        elif language in ("javascript", "typescript"):
+            tools = [ScanTool.SEMGREP]
+            if ScanTool.JS_SCANNER in self.scanners:
+                tools.append(ScanTool.JS_SCANNER)
+            return tools
         elif language == "go":
             return [ScanTool.SEMGREP]
         else:
             return [ScanTool.SEMGREP]
 
     def get_available_scanners(self) -> List[str]:
-        """获取可用扫描器列表"""
-        return [tool.value for tool in self.scanners.keys()]
+        """获取已配置且可执行的扫描器列表。"""
+        return [
+            tool.value
+            for tool, scanner in self.scanners.items()
+            if getattr(scanner, "available", True)
+        ]
+
+    def get_unavailable_scanner_messages(self) -> List[str]:
+        """返回已配置但未启用的扫描器提示，供 CLI 在扫描后集中展示。"""
+        return [
+            scanner.unavailable_reason
+            for scanner in self.scanners.values()
+            if getattr(scanner, "available", True) is False
+            and getattr(scanner, "unavailable_reason", None)
+        ]
+
+    def get_runtime_warnings(self) -> List[str]:
+        """返回扫描过程中产生的可操作提示，例如压缩代码预处理状态。"""
+        warnings: List[str] = []
+        for scanner in self.scanners.values():
+            getter = getattr(scanner, "get_preprocess_warnings", None)
+            if getter:
+                warnings.extend(getter())
+        return list(dict.fromkeys(warnings))

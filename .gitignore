@@ -8,3 +8,12 @@ build/
 .env
 *.db
 .venv/
+.backups/
+.fp_sentinel/
+.coverage
+htmlcov/
+reports/
+
+# 本地调试产物（CI 使用 artifacts/ 目录，与此处的扁平临时文件区分）
+artifacts-*.xml
+.ci-scan-output/

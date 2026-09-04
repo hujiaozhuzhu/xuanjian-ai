@@ -8,20 +8,20 @@ FastAPI Web 服务器 + 核心服务层
 - 三层误报过滤流水线
 """
 
-import asyncio
 import json
 import logging
 import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import TYPE_CHECKING, List, Optional, Dict, Any
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 from .models import (
-    ScanResult, FilterResult, FilterResponse, FilterStatistics,
-    Verdict, ScanTool, Severity, Project, ProjectStats,
-    FalsePositiveMark, ScanHistory, Finding,
-    scan_result_to_finding,
+    ScanResult, FilterResult, FilterStatistics,
+    Verdict, ScanTool, Project, FalsePositiveMark, ScanHistory,
 )
 from .filters import RuleFilter, ContextFilter, BaselineFilter
 from .scanners.manager import ScannerManager
@@ -86,9 +86,6 @@ class FPServer:
         confidence_threshold: float = 0.7,
     ) -> FilterResult:
         """应用三层过滤器"""
-        import time as _time
-        start = _time.monotonic()
-
         current: Optional[FilterResult] = None
 
         # L1
@@ -354,26 +351,26 @@ class FPServer:
 
         # 简单 markdown 格式
         lines = [
-            f"# 玄鉴扫描报告",
-            f"",
+            "# 玄鉴扫描报告",
+            "",
             f"- **扫描ID**: `{scan_id}`",
             f"- **项目路径**: {scan.get('project_path')}",
             f"- **语言**: {scan.get('language')}",
             f"- **完成时间**: {scan.get('completed_at')}",
-            f"",
-            f"## 统计",
-            f"",
-            f"| 指标 | 数值 |",
-            f"|------|------|",
+            "",
+            "## 统计",
+            "",
+            "| 指标 | 数值 |",
+            "|------|------|",
             f"| 总发现 | {stats.total} |",
             f"| 误报 | {stats.false_positives} |",
             f"| 疑似误报 | {stats.likely_false_positives} |",
             f"| 真实问题 | {stats.true_positives} |",
             f"| 待复核 | {stats.needs_review} |",
             f"| 减少率 | {stats.reduction_rate} |",
-            f"",
-            f"## 发现详情",
-            f"",
+            "",
+            "## 发现详情",
+            "",
         ]
 
         for f in findings:
@@ -418,9 +415,7 @@ class FPServer:
 
 def create_app(server: Optional[FPServer] = None) -> "FastAPI":
     """创建 FastAPI 应用（集成 Web 仪表板）"""
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException
-    from fastapi.staticfiles import StaticFiles
-    from fastapi.responses import HTMLResponse, JSONResponse
+    from fastapi import HTTPException
     from pydantic import BaseModel as PydanticBaseModel
 
     if server is None:

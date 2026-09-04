@@ -7,11 +7,10 @@
 
 import json
 import logging
-import asyncio
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, Query, Depends
 from fastapi.staticfiles import StaticFiles
@@ -20,10 +19,7 @@ from fastapi.security import APIKeyHeader
 from pydantic import BaseModel as PydanticBaseModel
 
 from ..models import (
-    ScanResult, FilterResult, FilterResponse, FilterStatistics,
-    Verdict, ScanTool, Severity, Project, ProjectStats,
-    FalsePositiveMark, ScanHistory, Finding,
-    scan_result_to_finding,
+    Verdict,
 )
 
 logger = logging.getLogger(__name__)
@@ -207,7 +203,7 @@ def create_web_app(server=None) -> FastAPI:
         if fr is None:
             raise HTTPException(status_code=404, detail="发现不存在")
         fr.verdict = Verdict.TRUE_POSITIVE
-        fr.recommendation = f"手动标记为真实问题" + (f": {req.reason}" if req.reason else "")
+        fr.recommendation = "手动标记为真实问题" + (f": {req.reason}" if req.reason else "")
         return {"status": "ok", "finding_id": finding_id}
 
     # ── 项目列表 ──

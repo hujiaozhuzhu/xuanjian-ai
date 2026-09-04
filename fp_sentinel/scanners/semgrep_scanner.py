@@ -7,7 +7,7 @@ Semgrep 扫描器
 import asyncio
 import json
 import logging
-import subprocess
+import shutil
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
@@ -38,6 +38,14 @@ PYTHON_SECURITY_RULESETS = [
     "p/bandit",
 ]
 
+# JavaScript/TypeScript 安全规则集
+JAVASCRIPT_SECURITY_RULESETS = [
+    "p/javascript",
+    "p/typescript",
+    "p/owasp-top-ten",
+    "p/security-audit",
+]
+
 
 class SemgrepScanner(BaseScanner):
     """Semgrep 扫描器"""
@@ -47,6 +55,11 @@ class SemgrepScanner(BaseScanner):
         self.timeout = self.config.get("timeout", 300)
         self.max_memory = self.config.get("max_memory", 512)
         self.jobs = self.config.get("jobs", 2)
+        self.available = shutil.which("semgrep") is not None
+        self.unavailable_reason: Optional[str] = None
+        if not self.available:
+            self.unavailable_reason = "Semgrep 未安装；高级规则未启用。安装命令: pip install fp-sentinel[scanners]"
+            logger.warning(self.unavailable_reason)
 
     def get_tool_type(self) -> ScanTool:
         return ScanTool.SEMGREP
@@ -71,6 +84,10 @@ class SemgrepScanner(BaseScanner):
         Returns:
             List[ScanResult]: 扫描结果
         """
+        if not self.available:
+            logger.warning(self.unavailable_reason)
+            return []
+
         cmd = self._build_command(
             target_path, language, rulesets, config_files
         )
@@ -92,7 +109,9 @@ class SemgrepScanner(BaseScanner):
             return self._parse_output(stdout.decode())
 
         except FileNotFoundError:
-            logger.error("Semgrep not found. Please install: pip install semgrep")
+            self.available = False
+            self.unavailable_reason = "Semgrep 未安装；高级规则未启用。安装命令: pip install fp-sentinel[scanners]"
+            logger.warning(self.unavailable_reason)
             return []
         except asyncio.TimeoutError:
             logger.error(f"Semgrep scan timed out after {self.timeout}s")
@@ -123,11 +142,11 @@ class SemgrepScanner(BaseScanner):
                 cmd.extend(["--config", r])
         else:
             # 使用默认规则集
-            default_rulesets = (
-                JAVA_SECURITY_RULESETS
-                if language == "java"
-                else PYTHON_SECURITY_RULESETS
-            )
+            default_rulesets = {
+                "java": JAVA_SECURITY_RULESETS,
+                "javascript": JAVASCRIPT_SECURITY_RULESETS,
+                "typescript": JAVASCRIPT_SECURITY_RULESETS,
+            }.get(language, PYTHON_SECURITY_RULESETS)
             for r in default_rulesets:
                 cmd.extend(["--config", r])
 

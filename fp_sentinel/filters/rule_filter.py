@@ -8,10 +8,9 @@ L1: 规则过滤器
 - Java/Python 特定规则
 """
 
-import hashlib
 import re
-from typing import List, Optional, Dict, Any
-from ..models import ScanResult, FilterResult, FilterReason, Verdict, ScanTool
+from typing import Optional, Dict, Any
+from ..models import ScanResult, FilterResult, FilterReason, Verdict
 from ..rules.java.rules import JAVA_FALSE_POSITIVE_RULES
 from ..utils.fingerprint import compute_fingerprint
 
