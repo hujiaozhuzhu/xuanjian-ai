@@ -128,12 +128,25 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[all]"
 
+      # 必须传入 scanner_func，否则基准测的是"不扫描"的耗时，
+      # 扫描速度会恒为 0 行/秒并被 min_lines_per_second 判为失败。
+      # 范围为 fp_sentinel/ 而非仓库根目录，避免把 .venv、.backups、
+      # tests 与 playground 计入，使数字反映真实产品代码扫描性能。
       - name: Run benchmark
         run: |
           python -c "
+          import asyncio
           from fp_sentinel.benchmark import BenchmarkRunner
+          from fp_sentinel.scanners.manager import ScannerManager
+
+          def scan_fn(path):
+              async def _go():
+                  manager = ScannerManager({})
+                  return await manager.scan(target_path=path, language='python')
+              return asyncio.run(_go())
+
           runner = BenchmarkRunner()
-          report = runner.run('.')
+          report = runner.run('fp_sentinel', scanner_func=scan_fn)
           print(runner.generate_report(report))
           if not report.passed:
               exit(1)
