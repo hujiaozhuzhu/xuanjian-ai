@@ -6,10 +6,14 @@
 
 import time
 import logging
-import psutil
 from typing import Dict, Any
 from pathlib import Path
 from dataclasses import dataclass, field
+
+try:
+    import psutil
+except ImportError:  # psutil is an optional dependency (extra: benchmark)
+    psutil = None
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +69,8 @@ class BenchmarkRunner:
         files, lines = self._count_code(path)
         logger.info(f"Benchmark: {files} files, {lines} lines")
 
-        # 监控资源
-        process = psutil.Process()
+        # 监控资源（psutil 是可选依赖，缺失时内存指标记为不可用）
+        process = psutil.Process() if psutil is not None else None
 
         # 运行扫描（perf_counter 精度高于 time.time，避免极快扫描被计为 0 秒）
         start_time = time.perf_counter()
@@ -81,11 +85,16 @@ class BenchmarkRunner:
         duration = time.perf_counter() - start_time
 
         # 收集资源使用
-        try:
-            memory_info = process.memory_info()
-            peak_memory = memory_info.rss / 1024 / 1024  # MB
-        except Exception:
+        if process is not None:
+            try:
+                memory_info = process.memory_info()
+                peak_memory = memory_info.rss / 1024 / 1024  # MB
+            except Exception:
+                peak_memory = 0
+        else:
             peak_memory = 0
+            logger.warning("psutil not installed; peak memory will not be measured. "
+                           "Install it with: pip install fp-sentinel[benchmark]")
 
         # 计算指标
         lines_per_sec = lines / duration if duration > 0 else 0
