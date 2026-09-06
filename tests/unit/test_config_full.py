@@ -75,6 +75,19 @@ class TestConfigFull:
         config = load_config(str(config_file))
         assert config is not None
 
+    def test_load_legacy_flat_filter_config(self, tmp_path):
+        """旧版顶层过滤器配置应规范化到 filters。"""
+        config_file = tmp_path / "legacy.json"
+        config_file.write_text(
+            '{"rule_filter": {"enabled": false}, '
+            '"context_filter": {"enabled": true}}',
+            encoding="utf-8",
+        )
+
+        config = load_config(str(config_file))
+        assert config.filters.rule_filter["enabled"] is False
+        assert config.filters.context_filter["enabled"] is True
+
     def test_load_nonexistent_config(self):
         """加载不存在的配置文件"""
         config = load_config("/nonexistent/config.yaml")

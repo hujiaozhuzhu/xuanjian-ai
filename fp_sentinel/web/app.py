@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel as PydanticBaseModel
 
+from .. import __version__
 from ..models import (
     Verdict,
 )
@@ -83,7 +84,7 @@ def create_web_app(server=None) -> FastAPI:
     app = FastAPI(
         title="玄鉴 Web 仪表板",
         description="XuanJian False Positive Sentinel - Web Dashboard API",
-        version="0.1.0",
+        version=__version__,
         dependencies=[Depends(verify_api_key)] if API_KEY else [],
     )
 
@@ -262,7 +263,7 @@ def create_web_app(server=None) -> FastAPI:
     async def api_v1_health():
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -274,11 +275,11 @@ def create_web_app(server=None) -> FastAPI:
 
 # ─────────────────────── 独立运行入口 ───────────────────────
 
-def main():
-    """独立运行 Web 仪表板"""
+def main(host: str = "127.0.0.1", port: int = 8080):
+    """独立运行 Web 仪表板，默认仅监听本机。"""
     import uvicorn
     app = create_web_app()
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

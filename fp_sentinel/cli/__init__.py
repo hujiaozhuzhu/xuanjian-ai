@@ -24,11 +24,29 @@ from ..scanners import ScannerManager, ResultNormalizer
 from ..database import get_database, ProjectRepo, FindingRepo, FPMarkRepo, ScanHistoryRepo
 from .terminal import create_console
 
+
 app = typer.Typer(
     name="xuanjian",
     help="玄鉴 (xuanjian-ai) — 代码审计误报排查 MCP 工具",
     add_completion=False,
 )
+
+@app.command("mcp")
+def mcp(
+    transport: str = typer.Option("stdio", "--transport", help="传输方式 (stdio/sse)"),
+    host: str = typer.Option("127.0.0.1", "--host", help="SSE 监听地址（默认仅本机）"),
+    port: int = typer.Option(8000, "--port", min=1, max=65535, help="SSE 监听端口"),
+    config_file: Optional[str] = typer.Option(None, "--config", "-c", help="JSON/YAML 配置文件路径"),
+):
+    """启动 MCP 代码审计服务器。"""
+    if transport not in {"stdio", "sse"}:
+        raise typer.BadParameter("必须是 stdio 或 sse", param_hint="--transport")
+    if transport == "sse" and host not in {"127.0.0.1", "localhost", "::1"}:
+        console.print("[yellow]警告：SSE 将监听非本机地址，请确保由反向代理或 ACL 提供认证。[/yellow]")
+
+    from ..mcp_server import run_mcp_server
+    asyncio.run(run_mcp_server(transport, host, port, config_file))
+
 
 # 注册浏览器子命令
 try:

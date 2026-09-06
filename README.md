@@ -483,6 +483,43 @@ print(runner.generate_report(report))
 
 ---
 
+## 🤖 Claude API 配置
+
+项目支持 Claude API 集成，用于 L4 智能降噪和红队攻击用例生成。
+
+### 快速配置
+
+在项目根目录创建 `.env` 文件：
+
+```bash
+# Claude API 配置
+CLAUDE_API_KEY=your_api_key_here
+CLAUDE_API_URL=https://token-plan-cn.xiaomimimo.com/v1
+CLAUDE_API_URL_ANTHROPIC=https://token-plan-cn.xiaomimimo.com/anthropic
+CLAUDE_MODEL=mimo-v2.5-pro
+
+# 客户端类型：anthropic 或 openai
+LLM_CLIENT_TYPE=anthropic
+```
+
+### 使用示例
+
+```python
+from fp_sentinel.llm_client import ClaudeClient
+
+# 创建客户端
+client = ClaudeClient()
+
+# 发送请求
+response = await client.chat([
+    {"role": "user", "content": "请解释什么是 SQL 注入？"}
+])
+```
+
+更多配置选项请参阅 [Claude 配置指南](docs/claude-config.md)。
+
+---
+
 ## 🤝 贡献
 
 欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。

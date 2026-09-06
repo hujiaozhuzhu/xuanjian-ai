@@ -23,13 +23,25 @@ class ScannerManager:
     """扫描器管理器"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
+        """Create a manager from either app-level or scanner-only config.
+
+        Older callers passed the complete application configuration while the
+        CLI passes ``AppConfig.scanners``.  Accept both shapes so scanner
+        settings are applied consistently across entry points.
+        """
+        raw_config = config or {}
+        nested_scanners = raw_config.get("scanners")
+        self.config = (
+            nested_scanners
+            if isinstance(nested_scanners, dict)
+            else raw_config
+        )
         self.scanners = {}
         self._init_scanners()
 
     def _init_scanners(self):
         """初始化扫描器"""
-        scanner_configs = self.config.get("scanners", {})
+        scanner_configs = self.config
 
         # Semgrep (通用)
         semgrep_config = scanner_configs.get("semgrep", {"enabled": True})
@@ -133,8 +145,22 @@ class ScannerManager:
         return f"{result.file}:{result.line}:{result.rule_id}"
 
     def _detect_language(self, target_path: str) -> str:
-        """自动检测项目语言"""
+        """自动检测项目或单个源文件的语言。"""
         import os
+
+        # 单文件扫描不能通过 os.walk() 统计扩展名，先直接识别文件类型。
+        if os.path.isfile(target_path):
+            extension = os.path.splitext(target_path)[1].lower()
+            if extension in {".js", ".jsx", ".mjs", ".cjs"}:
+                return "javascript"
+            if extension in {".ts", ".tsx"}:
+                return "typescript"
+            if extension == ".py":
+                return "python"
+            if extension == ".java":
+                return "java"
+            if extension == ".go":
+                return "go"
 
         # 检查构建文件
         if os.path.exists(os.path.join(target_path, "pom.xml")):
