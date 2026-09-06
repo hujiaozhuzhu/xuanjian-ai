@@ -68,8 +68,8 @@ class BenchmarkRunner:
         # 监控资源
         process = psutil.Process()
 
-        # 运行扫描
-        start_time = time.time()
+        # 运行扫描（perf_counter 精度高于 time.time，避免极快扫描被计为 0 秒）
+        start_time = time.perf_counter()
         findings = []
 
         if scanner_func:
@@ -78,7 +78,7 @@ class BenchmarkRunner:
             except Exception as e:
                 logger.error(f"Scanner failed: {e}")
 
-        duration = time.time() - start_time
+        duration = time.perf_counter() - start_time
 
         # 收集资源使用
         try:
@@ -152,10 +152,12 @@ class BenchmarkRunner:
         if memory > self.BASELINES["max_memory_mb"]:
             return False
 
-        # 最低速度
-        lines_per_sec = lines / duration if duration > 0 else 0
-        if lines_per_sec < self.BASELINES["min_lines_per_second"]:
-            return False
+        # 最低速度。耗时为 0 表示快到无法测量，应视为通过而不是不达标，
+        # 否则在计时精度不足的平台上会把最快的结果判成最差的结果。
+        if duration > 0:
+            lines_per_sec = lines / duration
+            if lines_per_sec < self.BASELINES["min_lines_per_second"]:
+                return False
 
         return True
 
