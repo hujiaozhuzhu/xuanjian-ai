@@ -63,6 +63,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "format": "table",
         "verbose": False,
     },
+    "llm": {
+        "client_type": "anthropic",
+        "model": "mimo-v2.5-pro",
+        "timeout": 30.0,
+    },
 }
 
 
@@ -99,6 +104,7 @@ class AppConfig(BaseModel):
     filters: FiltersConfig = Field(default_factory=FiltersConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     output: Dict[str, Any] = Field(default_factory=dict)
+    llm: Dict[str, Any] = Field(default_factory=dict)
 
 
 # ─────────────────────── 配置加载 ───────────────────────
@@ -116,6 +122,22 @@ def deep_merge(base: dict, override: dict) -> dict:
     return result
 
 
+def normalize_config(raw_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Normalize legacy flat filter settings into the application schema."""
+    normalized = dict(raw_config or {})
+    legacy_filters = {
+        key: normalized.pop(key)
+        for key in ("rule_filter", "context_filter", "ml_filter")
+        if key in normalized
+    }
+    if legacy_filters:
+        normalized["filters"] = deep_merge(
+            legacy_filters,
+            normalized.get("filters", {}),
+        )
+    return normalized
+
+
 def _apply_env_overrides(config: dict) -> dict:
     """
     从环境变量覆盖配置
@@ -131,6 +153,8 @@ def _apply_env_overrides(config: dict) -> dict:
         "XUANJIAN_FINDSECBUGS_JAR": ("scanners", "findsecbugs", "findsecbugs_jar"),
         "XUANJIAN_PROJECT_PATH": ("project", "path"),
         "XUANJIAN_PROJECT_LANGUAGE": ("project", "language"),
+        "LLM_CLIENT_TYPE": ("llm", "client_type"),
+        "CLAUDE_MODEL": ("llm", "model"),
     }
     for env_var, path in env_map.items():
         value = os.environ.get(env_var)
@@ -169,9 +193,9 @@ def load_config(
         AppConfig: 解析后的配置对象
     """
     # 从默认值开始
-    config = DEFAULT_CONFIG.copy()
+    config = deep_merge({}, DEFAULT_CONFIG)
 
-    # 尝试加载 YAML 文件
+    # 尝试加载 YAML/JSON 文件
     paths_to_try = []
     if config_path:
         paths_to_try.append(config_path)
@@ -179,8 +203,10 @@ def load_config(
         paths_to_try.extend([
             os.path.join(os.getcwd(), "xuanjian.yaml"),
             os.path.join(os.getcwd(), "xuanjian.yml"),
+            os.path.join(os.getcwd(), "config.json"),
             os.path.expanduser("~/.xuanjian/config.yaml"),
             os.path.expanduser("~/.xuanjian/config.yml"),
+            os.path.expanduser("~/.xuanjian/config.json"),
         ])
 
     for p in paths_to_try:
@@ -189,6 +215,7 @@ def load_config(
             try:
                 with open(p, "r", encoding="utf-8") as f:
                     file_config = yaml.safe_load(f) or {}
+                file_config = normalize_config(file_config)
                 config = deep_merge(config, file_config)
                 logger.info(f"Loaded config from: {p}")
                 break
@@ -200,7 +227,7 @@ def load_config(
 
     # 编程方式覆盖
     if overrides:
-        config = deep_merge(config, overrides)
+        config = deep_merge(config, normalize_config(overrides))
 
     # 构建 AppConfig 对象
     try:
@@ -251,3 +278,30 @@ def expand_db_path(path: str) -> str:
     expanded = os.path.expanduser(os.path.expandvars(path))
     os.makedirs(os.path.dirname(expanded), exist_ok=True)
     return expanded
+
+
+def get_llm_client(config: AppConfig):
+    """
+    根据配置创建 LLM 客户端
+
+    Args:
+        config: 应用配置
+
+    Returns:
+        LLM 客户端实例
+    """
+    from .llm_client import create_llm_client, load_llm_client_from_env
+
+    llm_config = config.llm
+    if not llm_config:
+        # 尝试从环境变量加载
+        try:
+            return load_llm_client_from_env()
+        except Exception as e:
+            logger.warning(f"Failed to load LLM client from env: {e}")
+            return None
+
+    client_type = llm_config.get("client_type", "anthropic")
+    model = llm_config.get("model")
+
+    return create_llm_client(client_type=client_type, model=model)

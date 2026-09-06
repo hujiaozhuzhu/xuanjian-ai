@@ -53,8 +53,8 @@
     "dead_code_patterns": [
       "if\\s+False\\s*:",
       "if\\s+0\\s*:",
-      "#.*TODO.*remove",
-      "#.*FIXME.*dead",
+      ".*TODO.*remove",
+      ".*FIXME.*dead",
       "pass\\s*$",
       "\\.\\.\\.\\s*$"
     ],
@@ -76,5 +76,10 @@
       "file_depth",
       "line_count"
     ]
+  },
+  "llm": {
+    "client_type": "anthropic",
+    "model": "mimo-v2.5-pro",
+    "timeout": 30.0
   }
 }

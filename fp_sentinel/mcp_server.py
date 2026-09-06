@@ -31,6 +31,7 @@ from .models import (
     ScanResult, FilterResult, FilterStatistics,
     Verdict, ScanTool,
 )
+from .config import load_config, normalize_config
 from .filters import RuleFilter, ContextFilter, BaselineFilter
 from .scanners.manager import ScannerManager
 
@@ -790,12 +791,17 @@ class MCPAuditServer:
             filter_level_stats=level_stats,
         )
 
-    async def run(self, transport: str = "stdio", port: int = 8000):
-        """运行 MCP 服务器"""
+    async def run(
+        self,
+        transport: str = "stdio",
+        host: str = "127.0.0.1",
+        port: int = 8000,
+    ):
+        """运行 MCP 服务器；SSE 默认只监听本机。"""
         if transport == "stdio":
             await self.mcp.run_stdio_async()
         elif transport == "sse":
-            await self.mcp.run_sse_async(host="0.0.0.0", port=port)
+            await self.mcp.run_sse_async(host=host, port=port)
         else:
             raise ValueError(f"不支持的传输方式: {transport}")
 
@@ -836,31 +842,40 @@ def create_mcp_server(config: Optional[Dict[str, Any]] = None) -> MCPAuditServer
     return MCPAuditServer(config)
 
 
-async def mcp_main():
-    """MCP 服务器入口"""
-    import argparse
-
-    parser = argparse.ArgumentParser(description="玄鉴 MCP 代码审计服务器")
-    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--config", type=str, default=None)
-    args = parser.parse_args()
-
+async def run_mcp_server(
+    transport: str = "stdio",
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    config_path: Optional[str] = None,
+):
+    """Create and run an MCP server with a shared config loader."""
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
-
-    config = None
-    if args.config:
-        from pathlib import Path
-        p = Path(args.config)
-        if p.exists():
-            with open(p, "r", encoding="utf-8") as f:
-                config = json.load(f)
-
+    config = load_config(config_path).model_dump()
+    # MCPAuditServer historically accepts flat filter keys; keep that adapter
+    # local while making file discovery and legacy normalization consistent.
+    config = normalize_config(config)
+    filters = config.pop("filters", {})
+    config["rule_filter"] = filters.get("rule_filter", {})
+    config["context_filter"] = filters.get("context_filter", {})
+    config["ml_filter"] = filters.get("ml_filter", {})
     server = create_mcp_server(config)
-    await server.run(args.transport, args.port)
+    await server.run(transport=transport, host=host, port=port)
+
+
+async def mcp_main():
+    """MCP 服务器模块入口（兼容旧版 argparse 用法）。"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="玄鉴 MCP 代码审计服务器")
+    parser.add_argument("--transport", choices=["stdio", "sse"], default="stdio")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--config", type=str, default=None)
+    args = parser.parse_args()
+    await run_mcp_server(args.transport, args.host, args.port, args.config)
 
 
 if __name__ == "__main__":

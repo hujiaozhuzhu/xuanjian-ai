@@ -41,6 +41,13 @@ class TestCLICommands:
         result = runner.invoke(app, ["browser", "--help"])
         assert result.exit_code == 0
 
+    def test_mcp_help(self):
+        result = runner.invoke(app, ["mcp", "--help"])
+        assert result.exit_code == 0
+        assert "transport" in result.output
+        assert "host" in result.output
+        assert "port" in result.output
+
     def test_scan_nonexistent(self):
         result = runner.invoke(app, ["scan", "/nonexistent", "--no-save"])
         assert result.exit_code in (0, 1)

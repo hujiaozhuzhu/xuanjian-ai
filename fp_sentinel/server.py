@@ -59,6 +59,9 @@ class FPServer:
         # 扫描器管理器
         self.scanner_manager = ScannerManager(self._config_data.get("scanners", {}))
 
+        # LLM 客户端
+        self.llm_client = None
+
         # 运行时存储
         # TODO: 数据库层集成 - 将以下内存字典替换为 database.repositories 中的持久化实现
         self._scans: Dict[str, Dict[str, Any]] = {}          # scan_id -> scan info
@@ -496,13 +499,29 @@ def create_server(config_path: Optional[str] = None) -> FPServer:
     Returns:
         FPServer 实例
     """
-    config = None
-    if config_path:
-        p = Path(config_path)
-        if p.exists():
-            with open(p, "r", encoding="utf-8") as f:
-                config = json.load(f)
-    return FPServer(config=config)
+    from .config import load_config, get_llm_client
+
+    config = load_config(config_path).model_dump()
+    filters = config.pop("filters", {})
+    # FPServer retains its legacy flat filter keys for API compatibility.
+    config.update({
+        "rule_filter": filters.get("rule_filter", {}),
+        "context_filter": filters.get("context_filter", {}),
+        "ml_filter": filters.get("ml_filter", {}),
+    })
+
+    # 创建服务器实例
+    server = FPServer(config=config)
+
+    # 加载 LLM 客户端
+    try:
+        llm_config = load_config(config_path)
+        server.llm_client = get_llm_client(llm_config)
+    except Exception as e:
+        logger.warning(f"Failed to load LLM client: {e}")
+        server.llm_client = None
+
+    return server
 
 
 # ─────────────────────── 内联仪表板 HTML ───────────────────────
@@ -701,7 +720,7 @@ loadStats();
 FPSentinelServer = FPServer
 
 
-async def run_server(host: str = "0.0.0.0", port: int = 8080, **kwargs):
+async def run_server(host: str = "127.0.0.1", port: int = 8080, **kwargs):
     """启动 Web 服务器"""
     import os
     import uvicorn
