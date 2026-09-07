@@ -53,6 +53,13 @@ try:
     from .browser_commands import app as browser_app
     app.add_typer(browser_app, name="browser", help="浏览器自动化 (JSRPC)")
 except ImportError:
+    pass
+
+# 注册知识图谱子命令 (v2.4.0 —— 查询插件 + 自动归档)
+try:
+    from ..knowledge_graph.cli.kg_commands import kg_app
+    app.add_typer(kg_app, name="kg", help="知识图谱查询与自动归档 (Knowledge Graph)")
+except Exception:  # noqa: BLE001 —— 模块/依赖不可用时静默降级
     pass  # 未安装 aiohttp 时跳过
 
 # 注册攻防数据子命令（Agent-Attack, v2.2.0）
@@ -131,6 +138,12 @@ def scan(
     ),
     output: str = typer.Option("./reports/", "--output", help="报告输出目录 (S7 白名单)"),
     save_to_db: bool = typer.Option(True, "--save/--no-save", help="是否保存到数据库"),
+    kg: bool = typer.Option(
+        False, "--kg/--no-kg",
+        help="启用知识图谱：扫描后自动归档 + 在报告内嵌入「⑦ 知识图谱参考」章节",
+    ),
+    kg_version: str = typer.Option("unversioned", "--kg-version", help="归档到知识图谱的项目版本标识"),
+    kg_top_k: int = typer.Option(5, "--kg-top-k", min=1, max=20, help="知识图谱参考章节最多展示的命中数"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """扫描项目，发现安全问题"""
@@ -206,7 +219,7 @@ def scan(
                 config=config,
             )
 
-        # 生成报告（S7：只写入 --output 白名单目录）
+        # 生成报告（S7：只写入 --output 白名单目录；--kg 启用知识图谱参考 + 自动归档）
         if report != "none" and findings:
             await _generate_reports(
                 report_kind=report,
@@ -216,6 +229,9 @@ def scan(
                 findings=findings,
                 config=config,
                 scan_id=scan_id,
+                kg_enabled=kg,
+                kg_version=kg_version,
+                kg_top_k=kg_top_k,
             )
 
     asyncio.run(_run())
@@ -346,8 +362,11 @@ async def _generate_reports(
     findings: List[Finding],
     config,
     scan_id: Optional[str],
+    kg_enabled: bool = False,
+    kg_version: str = "unversioned",
+    kg_top_k: int = 5,
 ) -> None:
-    """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二）"""
+    """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二 + v2.4.0 知识图谱参考）"""
     from pathlib import Path as _Path
 
     from ..cli.attack_commands import build_attack_data, save_attack_records
@@ -356,6 +375,8 @@ async def _generate_reports(
 
     project_name = _Path(project_path).name
     out = _Path(output_dir).resolve()
+
+    kg_report_text = ""
 
     async with get_database(
         expand_db_path(config.database.path), config.database.wal_mode
@@ -377,8 +398,36 @@ async def _generate_reports(
                 trend=trend,
                 findings=findings,
             )
+            if kg_enabled:
+                try:
+                    from ..knowledge_graph.features.query_plugin import KnowledgeQueryPlugin
+                    from ..knowledge_graph.features.report_enricher import (
+                        append_reference_to_report,
+                        build_reference_section,
+                        inject_finding_metadata,
+                    )
+                    from ..knowledge_graph.store import open_store
+
+                    store = open_store()
+                    await store.connect(); await store.initialize()
+                    try:
+                        qb = KnowledgeQueryPlugin(archive_fn=_kg_archive_cb(store), top_k=kg_top_k)
+                        kg_matches = await qb.batch_match(findings)
+                        for f in findings:
+                            fid = _fid(f)
+                            if fid in kg_matches:
+                                d = f.metadata or {}
+                                inject_finding_metadata(d, kg_matches[fid])
+                                f.metadata = d
+                        reference = build_reference_section(kg_matches, top_k=kg_top_k)
+                        content = append_reference_to_report(content, reference)
+                    finally:
+                        await store.close()
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(f"知识图谱增强失败(仅参考章节): {e}")
             path = write_report(content, str(out), "compliance_report.md")
             console.print(f"[green]✓ 合规报告已生成: {path}[/green]")
+            kg_report_text = content
 
         if report_kind in ("attack", "all"):
             chain_report, exploit_results, verify_results, poc_map = build_attack_data(
@@ -404,6 +453,58 @@ async def _generate_reports(
                 console.print(f"[dim]已记录 {n} 条攻防数据（30 天保留，attack-purge 可清理）[/dim]")
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"攻防数据落库失败: {e}")
+
+    # —— 自动归档钩子 (v2.4.0 知识图谱) ——
+    if kg_enabled and (kg_report_text or findings):
+        try:
+            from ..knowledge_graph.features.auto_archive import AutoArchiver
+
+            async with AutoArchiver() as a:
+                result = await a.archive_scan(
+                    project_name=project_name,
+                    project_path=project_path,
+                    findings=findings,
+                    report_md=kg_report_text,
+                    version=kg_version,
+                    language=language,
+                    scanner=scan_id or "",
+                    report_kind=report_kind,
+                    duration_seconds=0.0,
+                )
+                console.print(
+                    f"[dim]✓ 知识图谱归档: snapshot={result.get('snapshot_id')}  "
+                    f"知识命中={result.get('knowledge_hits', 0)} CVE命中={result.get('cve_hits', 0)}[/dim]"
+                )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"知识图谱归档失败: {e}")
+
+
+def _fid(finding) -> Optional[str]:
+    for k in ("id", "fingerprint", "finding_id"):
+        if isinstance(finding, dict):
+            v = finding.get(k)
+        else:
+            v = getattr(finding, k, None)
+        if v is not None and str(v):
+            return str(v)
+    return None
+
+
+async def _kg_archive_cb(store):
+    from ..knowledge_graph.models import ArchiveQuery
+
+    async def _fn(category=None, cwe=None, language=None, limit=200):
+        q = ArchiveQuery(category=category, cwe=cwe, language=language, limit=limit, offset=0)
+        recs = await store.search_records(q)
+        return [
+            {"id": r.id, "rule_id": r.rule_id, "severity": r.severity,
+             "fix_title": r.fix_title, "fix_diff": r.fix_diff,
+             "reference_cve": r.reference_cve, "incident_note": r.incident_note,
+             "archived_at": r.archived_at, "category": r.category,
+             "language": r.language, "file_path": r.file_path, "line_start": r.line_start}
+            for r in recs
+        ]
+    return _fn
 
 
 # ─────────────────────── list 命令 ───────────────────────

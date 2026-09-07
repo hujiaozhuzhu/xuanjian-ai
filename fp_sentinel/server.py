@@ -486,6 +486,14 @@ def create_app(server: Optional[FPServer] = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail="Scan not found")
         return scan
 
+    # ─────────────────── 知识图谱 REST (v2.4.0) ───────────────────
+    try:
+        from .knowledge_graph.routes import router as kg_router
+
+        app.include_router(kg_router)
+    except Exception as e:  # noqa: BLE001 —— 模块/依赖不可用时静默降级，不影响核心 API
+        logger.warning(f"知识图谱 REST 路由未注册: {e}")
+
     return app
 
 
