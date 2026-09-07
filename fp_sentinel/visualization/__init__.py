@@ -1,5 +1,5 @@
 """
-玄鉴 v2.4.0 — 知识图谱可视化模块 (Knowledge Graph Visualization)
+玄鉴 v2.5.1 — 知识图谱可视化模块 (Knowledge Graph Visualization)
 
 提供漏洞热力图与版本变化趋势图生成功能。
 支持 HTML 交互式 与 PNG 静态图 两种输出格式。
@@ -9,7 +9,7 @@
 - VulnerabilityHeatmap: 按模块/漏洞类型/严重程度生成风险热力图
 - VersionTrendChart: 展示版本间漏洞数量/严重程度/修复率的变化趋势
 
-版本: 2.4.0
+版本: 2.5.1
 """
 
 from .heatmap import VulnerabilityHeatmap, HeatmapCell, HeatmapResult
@@ -28,7 +28,7 @@ from .models import (
     get_theme_text_color,
 )
 
-__version__ = "2.4.0"
+__version__ = "2.5.1"
 
 __all__ = [
     # 生成器

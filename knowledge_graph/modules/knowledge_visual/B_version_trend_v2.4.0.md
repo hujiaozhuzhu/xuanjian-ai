@@ -1,6 +1,6 @@
-# 玄鉴 v2.4.0 — 版本变化趋势图 (Version Trend Chart)
+# 玄鉴 v2.5.1 — 版本变化趋势图 (Version Trend Chart)
 
-> 版本: v2.4.0 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
+> 版本: v2.5.1 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
 
 ---
 
@@ -106,4 +106,4 @@ result = chart.generate(inp, output_dir="./reports", output_format=OutputFormat.
 
 ---
 
-*文档由 CatPaw Agent 根据 v2.4.0 Knowledge Graph Visualization Module 开发结果自动生成*
+*文档由 CatPaw Agent 根据 v2.5.1 Knowledge Graph Visualization Module 开发结果自动生成*

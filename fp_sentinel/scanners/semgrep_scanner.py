@@ -60,6 +60,13 @@ GO_SECURITY_RULESETS = [
     "p/sql-injection",
 ]
 
+# PHP 安全规则集 (v2.5.1)
+PHP_SECURITY_RULESETS = [
+    "p/php",
+    "p/security-audit",
+    "p/secrets",
+]
+
 
 def _builtin_rule_path(filename: str) -> Optional[str]:
     """Resolve a bundled Semgrep YAML rule file shipped with fp-sentinel."""
@@ -155,37 +162,56 @@ class SemgrepScanner(BaseScanner):
         rulesets: Optional[List[str]],
         config_files: Optional[List[str]],
     ) -> List[str]:
-        """构建 Semgrep 命令"""
+        """构建 Semgrep 命令
+
+        v2.5.1 P0-Fix: 修复 --config 与 --lang 参数冲突。
+        Semgrep 不允许 --config 和 --lang 同时出现：当指定 --config 时，
+        Semgrep 从规则声明中推断语言；--lang 仅在不提供任何 --config 的
+        纯语言过滤模式下使用。重构逻辑确保二者互斥。
+        """
         cmd = ["semgrep", "scan", "--json", "--quiet"]
 
         # 设置并行数
         cmd.extend(["--jobs", str(self.jobs)])
 
-        # 设置规则
+        # 收集所有 --config 条目
+        config_entries: List[str] = []
+
         if config_files:
-            for f in config_files:
-                cmd.extend(["--config", f])
+            config_entries.extend(config_files)
         elif rulesets:
-            for r in rulesets:
-                cmd.extend(["--config", r])
+            config_entries.extend(rulesets)
         else:
-            # 使用默认规则集 (v2.3.0 新增 Go 规则集路由)
+            # 使用默认规则集 (v2.3.0 新增 Go 规则集路由; v2.5.1 新增 PHP)
             default_rulesets = {
                 "java": JAVA_SECURITY_RULESETS,
                 "javascript": JAVASCRIPT_SECURITY_RULESETS,
                 "typescript": JAVASCRIPT_SECURITY_RULESETS,
                 "go": GO_SECURITY_RULESETS,
+                "php": PHP_SECURITY_RULESETS,
             }.get(language, PYTHON_SECURITY_RULESETS)
-            for r in default_rulesets:
-                cmd.extend(["--config", r])
+            config_entries.extend(default_rulesets)
 
-        # P1-Fix/P3-Fix: 自动追加反序列化专项规则
+        # v2.5.1 P0-Fix: 按语言过滤反序列化专项规则，避免规则与语言不匹配
         for builtin_rule in DESER_RULE_FILES:
-            if builtin_rule:
-                cmd.extend(["--config", builtin_rule])
+            if not builtin_rule:
+                continue
+            # 仅追加与当前语言匹配的反序列化规则
+            if language == "python" and "python-deserialization" in builtin_rule:
+                config_entries.append(builtin_rule)
+            elif language == "php" and "php-phar-deserialization" in builtin_rule:
+                config_entries.append(builtin_rule)
+            elif language in (None, "auto"):
+                # auto 模式保留全部（向后兼容）
+                config_entries.append(builtin_rule)
 
-        # 语言过滤
-        if language and language != "auto":
+        # 添加 --config 参数
+        for entry in config_entries:
+            cmd.extend(["--config", entry])
+
+        # v2.5.1 P0-Fix: 仅在没有 --config 时才使用 --lang
+        # Semgrep CLI 不支持同时传入 --config 和 --lang
+        if not config_entries and language and language != "auto":
             cmd.extend(["--lang", language])
 
         # 忽略路径

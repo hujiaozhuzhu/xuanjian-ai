@@ -1,5 +1,5 @@
 """
-玄鉴 v2.4.0 — 版本变化趋势图生成器 (Version Trend Chart Generator)
+玄鉴 v2.5.1 — 版本变化趋势图生成器 (Version Trend Chart Generator)
 
 功能：展示不同版本间漏洞数量、严重程度、修复率的变化趋势。
 输出：支持 HTML 交互式（Self-contained，内联 JS 折线图）、PNG 静态图（zlib+struct 编码）。
@@ -10,7 +10,7 @@
 - 三种配色主题：dark（默认）/ light / high_contrast
 - 支持多种指标：总数、严重度分布、修复率、新增 vs 修复
 
-版本: 2.4.0
+版本: 2.5.1
 """
 
 from __future__ import annotations
@@ -333,7 +333,7 @@ th {{
 <body>
 <div class="container">
     <h1>&#128200; 版本变化趋势图</h1>
-    <p class="subtitle">项目: {project} &nbsp;|&nbsp; 生成时间: {now} &nbsp;|&nbsp; 玄鉴 fp-sentinel v2.4.0</p>
+    <p class="subtitle">项目: {project} &nbsp;|&nbsp; 生成时间: {now} &nbsp;|&nbsp; 玄鉴 fp-sentinel v2.5.1</p>
 
     <div class="stats">
         <div class="stat-card">
@@ -387,7 +387,7 @@ th {{
     </div>
 
     <div class="footer">
-        <p>由玄鉴 fp-sentinel v2.4.0 知识图谱可视化模块自动生成 &nbsp;|&nbsp; 仅用于防御性安全审计</p>
+        <p>由玄鉴 fp-sentinel v2.5.1 知识图谱可视化模块自动生成 &nbsp;|&nbsp; 仅用于防御性安全审计</p>
     </div>
 </div>
 

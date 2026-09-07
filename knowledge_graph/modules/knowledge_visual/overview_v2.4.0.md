@@ -1,12 +1,12 @@
-# 玄鉴 v2.4.0 — 知识图谱可视化模块总览 (Knowledge Graph Visualization)
+# 玄鉴 v2.5.1 — 知识图谱可视化模块总览 (Knowledge Graph Visualization)
 
-> 版本: v2.4.0 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
+> 版本: v2.5.1 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
 
 ---
 
 ## 一、模块概述
 
-知识图谱可视化模块 (Knowledge Graph Visualization) 是玄鉴 v2.4.0 的核心子模块，
+知识图谱可视化模块 (Knowledge Graph Visualization) 是玄鉴 v2.5.1 的核心子模块，
 提供漏洞热力图与版本变化趋势图两种可视化输出，帮助安全团队直观理解项目风险分布
 与演进态势。
 
@@ -126,7 +126,7 @@ reports/*.html, reports/*.png
 
 ## 八、回滚策略
 
-若 v2.4.0 引入问题，执行以下命令回滚整个模块：
+若 v2.5.1 引入问题，执行以下命令回滚整个模块：
 ```
 1. 删除 fp_sentinel/visualization/ 目录
 2. 删除 tests/unit/test_visualization_*.py 文件
@@ -134,4 +134,4 @@ reports/*.html, reports/*.png
 
 ---
 
-*文档由 CatPaw Agent 根据 v2.4.0 Knowledge Graph Visualization Module 开发结果自动生成*
+*文档由 CatPaw Agent 根据 v2.5.1 Knowledge Graph Visualization Module 开发结果自动生成*

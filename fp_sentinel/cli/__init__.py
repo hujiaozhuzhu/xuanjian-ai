@@ -55,7 +55,7 @@ try:
 except ImportError:
     pass
 
-# 注册知识图谱子命令 (v2.4.0 —— 查询插件 + 自动归档)
+# 注册知识图谱子命令 (v2.5.1 —— 查询插件 + 自动归档)
 try:
     from ..knowledge_graph.cli.kg_commands import kg_app
     app.add_typer(kg_app, name="kg", help="知识图谱查询与自动归档 (Knowledge Graph)")
@@ -93,6 +93,59 @@ except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
 console = create_console()
+
+# ── v2.5.1: enterprise-init 命令（开箱即用一键初始化） ──
+
+@app.command("enterprise-init")
+def enterprise_init_cmd(
+    db_path: str = typer.Option("~/.xuanjian/data.db", "--db", help="主数据库路径"),
+    notify_db: str = typer.Option("~/.xuanjian/notify.db", "--notify-db", help="通知数据库路径"),
+    no_admin: bool = typer.Option(False, "--no-admin", help="不创建默认管理员账号"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
+):
+    """一键初始化企业级功能（权限/任务/通知数据库 + 默认管理员账号）"""
+    async def _run():
+        _setup_logging(verbose)
+        from ..database import initialize_all_enterprise_dbs
+
+        console.print("[bold]🔧 正在初始化企业级功能数据库...[/bold]")
+        try:
+            result = await initialize_all_enterprise_dbs(
+                main_db_path=db_path,
+                notify_db_path=notify_db,
+            )
+
+            main = result["main"]
+            notify = result["notify"]
+
+            if main.get("admin_created"):
+                console.print(
+                    f"\n[green]✅ 默认管理员账号已创建[/green]\n"
+                    f"   用户名: [cyan]admin[/cyan]\n"
+                    f"   ID: {main.get('admin_id', '')[:8]}...\n\n"
+                    f"[bold yellow]⚠️ 请立即登录并修改默认密码！[/bold yellow]"
+                )
+
+            if main.get("tables_created"):
+                console.print(f"\n[dim]新建表: {', '.join(main['tables_created'][:10])}[/dim]")
+            else:
+                console.print("[dim]所有表已存在，无需重复创建[/dim]")
+
+            console.print(f"\n[green]✓ 主数据库:[/green] {main['db_path']}")
+            console.print(f"[green]✓ 通知数据库:[/green] {notify['db_path']}")
+            console.print(
+                f"\n[bold]✅ 企业功能已就绪！[/bold] 现在可以直接使用:\n"
+                f"  [cyan]xuanjian perm user-add[/cyan]    — 创建用户\n"
+                f"  [cyan]xuanjian perm roles[/cyan]    — 查看权限矩阵\n"
+                f"  [cyan]xuanjian task list[/cyan]    — 查看任务\n"
+            )
+        except Exception as e:
+            console.print(f"[red]❌ 初始化失败: {e}[/red]")
+            raise typer.Exit(1)
+
+    asyncio.run(_run())
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -380,7 +433,7 @@ async def _generate_reports(
     kg_version: str = "unversioned",
     kg_top_k: int = 5,
 ) -> None:
-    """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二 + v2.4.0 知识图谱参考）"""
+    """生成合规/攻防 Markdown 报告（v2.2.0 核一 + 核二 + v2.5.1 知识图谱参考）"""
     from pathlib import Path as _Path
 
     from ..cli.attack_commands import build_attack_data, save_attack_records
@@ -468,7 +521,7 @@ async def _generate_reports(
             except Exception as e:  # noqa: BLE001
                 logger.warning(f"攻防数据落库失败: {e}")
 
-    # —— 自动归档钩子 (v2.4.0 知识图谱) ——
+    # —— 自动归档钩子 (v2.5.1 知识图谱) ——
     if kg_enabled and (kg_report_text or findings):
         try:
             from ..knowledge_graph.features.auto_archive import AutoArchiver

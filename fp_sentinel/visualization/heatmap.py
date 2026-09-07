@@ -1,5 +1,5 @@
 """
-玄鉴 v2.4.0 — 漏洞热力图生成器 (Vulnerability Heatmap Generator)
+玄鉴 v2.5.1 — 漏洞热力图生成器 (Vulnerability Heatmap Generator)
 
 功能：按模块、漏洞类型、严重程度生成项目风险热力图。
 输出：支持 HTML 交互式（Self-contained，ECharts 内联）、PNG 静态图（zlib+struct 编码）。
@@ -10,7 +10,7 @@
 - 三种配色主题：dark（默认）/ light / high_contrast
 - 与 fp_sentinel/models.py 的 Severity 枚举兼容
 
-版本: 2.4.0
+版本: 2.5.1
 """
 
 from __future__ import annotations
@@ -335,7 +335,7 @@ th {{
 <body>
 <div class="container">
     <h1>&#128293; 漏洞热力图</h1>
-    <p class="subtitle">项目: {project} &nbsp;|&nbsp; 生成时间: {now} &nbsp;|&nbsp; 玄鉴 fp-sentinel v2.4.0</p>
+    <p class="subtitle">项目: {project} &nbsp;|&nbsp; 生成时间: {now} &nbsp;|&nbsp; 玄鉴 fp-sentinel v2.5.1</p>
 
     <div class="stats">
         <div class="stat-card">
@@ -392,7 +392,7 @@ th {{
     </div>
 
     <div class="footer">
-        <p>由玄鉴 fp-sentinel v2.4.0 知识图谱可视化模块自动生成 &nbsp;|&nbsp; 仅用于防御性安全审计</p>
+        <p>由玄鉴 fp-sentinel v2.5.1 知识图谱可视化模块自动生成 &nbsp;|&nbsp; 仅用于防御性安全审计</p>
     </div>
 </div>
 </body>

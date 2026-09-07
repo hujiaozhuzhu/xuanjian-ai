@@ -486,7 +486,7 @@ def create_app(server: Optional[FPServer] = None) -> "FastAPI":
             raise HTTPException(status_code=404, detail="Scan not found")
         return scan
 
-    # ─────────────────── 知识图谱 REST (v2.4.0) ───────────────────
+    # ─────────────────── 知识图谱 REST (v2.5.1) ───────────────────
     try:
         from .knowledge_graph.routes import router as kg_router
 

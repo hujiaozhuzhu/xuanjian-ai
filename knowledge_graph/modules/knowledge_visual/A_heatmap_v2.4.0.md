@@ -1,6 +1,6 @@
-# 玄鉴 v2.4.0 — 漏洞热力图生成 (Vulnerability Heatmap)
+# 玄鉴 v2.5.1 — 漏洞热力图生成 (Vulnerability Heatmap)
 
-> 版本: v2.4.0 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
+> 版本: v2.5.1 ｜ 生成日期: 2026-09-08 ｜ 模块归属: 知识图谱可视化
 
 ---
 
@@ -161,4 +161,4 @@ tests/unit/
 
 ---
 
-*文档由 CatPaw Agent 根据 v2.4.0 Knowledge Graph Visualization Module 开发结果自动生成*
+*文档由 CatPaw Agent 根据 v2.5.1 Knowledge Graph Visualization Module 开发结果自动生成*

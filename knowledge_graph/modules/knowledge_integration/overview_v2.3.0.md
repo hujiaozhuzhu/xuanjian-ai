@@ -1,6 +1,6 @@
-# 玄鉴 v2.4.0 — 知识图谱查询与自动归档模块 (Knowledge Integration)
+# 玄鉴 v2.5.1 — 知识图谱查询与自动归档模块 (Knowledge Integration)
 
-> 归档版本标注：v2.3.0（按子功能归档规范）；交付版本：v2.4.0
+> 归档版本标注：v2.5.1（按子功能归档规范）；交付版本：v2.5.1
 > 模块路径：`fp_sentinel/knowledge_graph/`
 > 导出日期：2026-02-27 ｜ 状态：已交付，零回归
 
@@ -133,7 +133,7 @@ async with AutoArchiver() as a:
 
 ## 六、回滚策略
 
-若 v2.4.0 问题：
+若 v2.5.1 问题：
 1. 删除 `fp_sentinel/knowledge_graph/` 目录
 2. 删除 `tests/unit/test_kg_*.py`
 3. 在 `cli/__init__.py` / `server.py` 中移除 try 块内的 KG 注册
@@ -141,4 +141,4 @@ async with AutoArchiver() as a:
 
 ---
 
-*文档由 CatPaw Agent 根据 v2.4.0 Knowledge Integration Module 开发结果自动生成*
+*文档由 CatPaw Agent 根据 v2.5.1 Knowledge Integration Module 开发结果自动生成*

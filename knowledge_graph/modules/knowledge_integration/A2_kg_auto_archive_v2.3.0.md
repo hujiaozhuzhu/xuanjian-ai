@@ -86,7 +86,7 @@ fp_sentinel/knowledge_graph/cli/kg_commands.py
 fp_sentinel/knowledge_graph/routes.py
 fp_sentinel/cli/__init__.py            注册 kg 子命令 + scan --kg
 fp_sentinel/server.py                   注册 /api/kg/*
-fp_sentinel/__init__.py                __version__ → 2.4.0
-pyproject.toml                         version → 2.4.0
+fp_sentinel/__init__.py                __version__ → 2.5.1
+pyproject.toml                         version → 2.5.1
 tests/unit/test_kg_*.py               4 文件 53 用例
-tests/unit/test_attack_cli.py         版本断言同步至 2.4.0
+tests/unit/test_attack_cli.py         版本断言同步至 2.5.1
