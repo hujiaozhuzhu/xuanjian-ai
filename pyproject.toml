@@ -76,3 +76,24 @@ include = ["fp_sentinel*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "fp_sentinel/notify/cli.py",
+    "tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 95
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+    "except Exception:",
+    "logger.warning",
+]

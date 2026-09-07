@@ -78,6 +78,20 @@ try:
 except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
+# 注册企业通知子命令 (v2.5.0 —— IM Webhook 推送)
+try:
+    from ..notify.cli import notify_app
+    app.add_typer(notify_app, name="notify", help="企业通知管理 (飞书/钉钉/企业微信 Webhook)")
+except Exception:  # noqa: BLE001 — 可选模块缺失时静默降级
+    pass
+
+# 注册企业权限管理子命令（v2.5.0 —— 三级角色权限体系）
+try:
+    from .perm_commands import perm_app
+    app.add_typer(perm_app, name="perm", help="企业权限管理（角色/项目访问控制/审计）")
+except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
+    pass
+
 console = create_console()
 logger = logging.getLogger(__name__)
 
