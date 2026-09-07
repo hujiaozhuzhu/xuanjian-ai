@@ -260,6 +260,42 @@ _LIMITATION_DB: Dict[str, Dict[str, str]] = {
         "bypass": "通过已有 gadget chain（魔术方法）构造 RCE；JNDI 注入 + 反序列化组合",
         "fix": "禁止对不可信数据使用 pickle/yaml.load：改用 JSON；使用 safe_load；若必须用 pickle 则加 HMAC 签名",
     },
+    # R1-Fix: 反序列化细分类防御/绕过知识库
+    "deser-java-native": {
+        "limitation": "ObjectInputFilter（JDK 9+）可限制反序列化的类；RMI 安全管理器可限制远程类加载",
+        "bypass": "利用非标准 gadget 链（如 SignedObject 包装、JNDI 从反序列化内部触发）。 CommonsCollections 4.x 可绕过部分过滤。",
+        "fix": "添加 ObjectInputFilter 白名单；升级到 commons-collections 3.2.2+/4.1+；使用 JSON 替代原生序列化",
+    },
+    "deser-java-fastjson": {
+        "limitation": "AutoType 从 1.2.25 起默认关闭；safeMode 完全禁用 @type",
+        "bypass": "AutoType 绕过（BypassAutoTypeCheck、期望类白名单技巧等，各版本独立）",
+        "fix": "升级 Fastjson 到最新版本；启用 safeMode；关闭 AutoType；使用 JSON.parseObject(data, clazz) 显式指定类型",
+    },
+    "deser-java-shiro": {
+        "limitation": "Shiro 1.2.5+ 已修复默认密钥问题；升级到 1.4.1+ 使用随机密钥",
+        "bypass": "通过 BeanContextSupport 等新 gadget 链绕过；Padding Oracle 攻击猜测密钥",
+        "fix": "替换默认强随机 AES 密钥；升级到最新版本 Shiro；删除反序列化前的 Cookie 值",
+    },
+    "deser-java-jackson": {
+        "limitation": "Jackson 2.9.9+ 默认关闭 defaultTyping；2.10+ 使用 @JsonTypeInfo 显式声明",
+        "bypass": "利用不同版本 Jackson 的变种 gadget（ROME, Jython, Spring 等）",
+        "fix": "移除 enableDefaultTyping() 调用；使用 @JsonTypeInfo(use = Id.NAME, include = As.PROPERTY, property = \"type\") 限定类名",
+    },
+    "deser-php-pop": {
+        "limitation": "PHP 7.4+ 的 allow_classes 选项限制 unserialize 可实例化的类；WAF 检测常见 POP 链特征",
+        "bypass": "利用 phar:// 包装器触发反序列化绕过直接 unserialize 检测；文件包含+LFI组合",
+        "fix": "使用 json_encode/json_decode；unserialize($data, ['allowed_classes' => false])；对不可信数据禁止反序列化",
+    },
+    "deser-php-phar": {
+        "limitation": "phar.readonly=1 阻止 Phar 文件创建；open_basedir 限制路径",
+        "bypass": "利用已有文件操作函数触发 phar:// . Muxin 出题技巧：phar 入 zip 伪装 PDF",
+        "fix": "php.ini 设置 phar.readonly=1；调用 file_exists 等前检查 mime + 后缀；使用 stream_wrapper_unregister('phar')",
+    },
+    "deser-python-pickle": {
+        "limitation": "HMAC 签名可防篡改；RestrictedUnpickler 可限制可加载类",
+        "bypass": "利用 __reduce_ex__ 替代 __reduce__ ；__builtins__.__import__ 绕过模块限制",
+        "fix": "使用 json/pickle 的安全替代方案（如 json.loads）；对必须 pickle 的数据加 HMAC 签名并校验",
+    },
     "jwt": {
         "limitation": "强随机密钥（≥256bit）可防止离线暴力破解；RS256 比 HS256 更安全",
         "bypass": "algorithm 混淆攻击（RS256→HS256）、kid 路径遍历、空算法绕过",
@@ -287,12 +323,15 @@ def _look_up_thinking(rule_id: str) -> Dict[str, str]:
 
 
 def _look_up_limitation(rule_id: str) -> Dict[str, str]:
-    """根据 rule_id 检索可能性问题知识库条目"""
+    """根据 rule_id 检索可能性问题知识库条目（R1-Fix: 优先匹配更具体的键）"""
     rid = (rule_id or "").lower()
+    best_entry: Dict[str, str] = {}
+    best_key_len = 0
     for key, entry in _LIMITATION_DB.items():
-        if key in rid:
-            return entry
-    return {}
+        if key in rid and len(key) > best_key_len:
+            best_entry = entry
+            best_key_len = len(key)
+    return best_entry
 
 
 def _effort_minutes(probability: float, difficulty: str) -> int:

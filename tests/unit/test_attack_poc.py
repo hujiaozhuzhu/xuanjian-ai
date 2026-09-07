@@ -134,3 +134,73 @@ class TestPocGeneration:
         types = list_vuln_types()
         assert len(types) >= 20
         assert "sqli-union" in types and "llm-prompt-injection" in types
+
+
+class TestDeserializationPocTemplates:
+    """E1/E2-Fix: 反序列化专项 PoC 模板测试"""
+
+    DESER_JAVA_TYPES = [
+        "deser-java-native",
+        "deser-java-fastjson",
+        "deser-java-shiro",
+        "deser-java-jackson",
+    ]
+    DESER_PHP_TYPES = ["deser-php-pop", "deser-php-phar"]
+    ALL_DESER_TYPES = DESER_JAVA_TYPES + DESER_PHP_TYPES
+
+    def test_all_deser_templates_present(self):
+        for dt in self.ALL_DESER_TYPES:
+            assert dt in POC_TEMPLATES, f"缺失反序列化 PoC 模板: {dt}"
+
+    def test_deser_templates_cwe_502(self):
+        for dt in self.ALL_DESER_TYPES:
+            assert POC_TEMPLATES[dt].cwe == "CWE-502", f"{dt} CWE 应为 CWE-502"
+
+    def test_java_native_contains_ysoserial(self):
+        poc = generate_poc("deser-java-native")
+        assert "ysoserial" in poc.rendered
+        assert "CommonsCollections" in poc.rendered
+        assert "readObject" in poc.rendered
+
+    def test_java_fastjson_contains_jndi(self):
+        poc = generate_poc("deser-java-fastjson")
+        assert "@type" in poc.rendered
+        assert "JdbcRowSetImpl" in poc.rendered
+        assert "Fastjson" in poc.description
+
+    def test_java_shiro_contains_aes_key(self):
+        poc = generate_poc("deser-java-shiro")
+        assert "kPH+bIxk5D2deZiIxcaaaA==" in poc.rendered
+        assert "rememberMe" in poc.rendered or "RememberMe" in poc.description
+
+    def test_java_jackson_contains_enableDefaultTyping(self):
+        poc = generate_poc("deser-java-jackson")
+        assert "enableDefaultTyping" in poc.rendered
+
+    def test_php_pop_contains_serialize_chain(self):
+        poc = generate_poc("deser-php-pop")
+        assert "serialize" in poc.rendered
+        assert "__destruct" in poc.rendered
+        assert "POP" in poc.description
+
+    def test_php_phar_contains_gif89a(self):
+        poc = generate_poc("deser-php-phar")
+        assert "GIF89a" in poc.rendered
+        assert "phar" in poc.rendered
+
+    def test_deser_pocs_guarded_local_only(self):
+        """所有反序列化 PoC 仅允许 localhost"""
+        with pytest.raises(UnsafeTargetError):
+            generate_poc("deser-java-native", target="http://10.0.0.1:8080")
+        with pytest.raises(UnsafeTargetError):
+            generate_poc("deser-php-pop", target="http://192.168.1.100")
+
+    def test_deser_pocs_safe_explanation_present(self):
+        for dt in self.ALL_DESER_TYPES:
+            t = POC_TEMPLATES[dt]
+            assert len(t.safe_explanation) > 10, f"{dt} 缺少 safe_explanation"
+
+    def test_deser_pocs_reference_cve(self):
+        for dt in self.ALL_DESER_TYPES:
+            t = POC_TEMPLATES[dt]
+            assert t.reference_cve.startswith("CVE-"), f"{dt} 缺少 CVE 编号"

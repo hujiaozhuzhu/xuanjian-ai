@@ -208,12 +208,22 @@ class ScannerManager:
                 return "typescript"
             return "javascript"
 
-        if ext_count.get(".java", 0) > ext_count.get(".py", 0):
+        java_count = ext_count.get(".java", 0)
+        py_count = ext_count.get(".py", 0)
+
+        # A1-Fix: 反编译 Java 代码目录检测（无 pom.xml 但有大量 .java 文件）
+        if java_count >= 3 and java_count >= py_count:
             return "java"
-        if ext_count.get(".py", 0) > 0:
+        if java_count > py_count:
+            return "java"
+        if py_count > 0:
             return "python"
         if ext_count.get(".go", 0) > 0:
             return "go"
+
+        # A1-Fix: 默认回退时优先 Java（反编译代码最常见的目标语言）
+        if java_count > 0:
+            return "java"
 
         return "java"  # 默认 Java
 
