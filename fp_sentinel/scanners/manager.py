@@ -2,6 +2,7 @@
 扫描器管理器
 
 统一调度多个扫描工具，聚合结果
+v2.3.0: 新增 Go 语言自动识别与 GoScanner 注册；增强 JS/TS 扩展名覆盖
 """
 
 import asyncio
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 # JS/TS 文件扩展名
 JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+# Go 文件扩展名
+GO_EXTENSIONS = {".go"}
 
 
 class ScannerManager:
@@ -75,6 +78,15 @@ class ScannerManager:
                 self.scanners[ScanTool.PY_SCANNER] = PythonScanner(py_config)
         except ImportError:
             logger.debug("Python Scanner not available")
+
+        # Go Scanner (Go 规则正则扫描 v2.3.0)
+        try:
+            from .go_scanner import GoScanner
+            go_config = scanner_configs.get("go_scanner", {"enabled": True})
+            if go_config.get("enabled", True):
+                self.scanners[ScanTool.GO_SCANNER] = GoScanner(go_config)
+        except ImportError:
+            logger.debug("Go Scanner not available")
 
     async def scan(
         self,
@@ -206,7 +218,12 @@ class ScannerManager:
         return "java"  # 默认 Java
 
     def _select_scanners(self, language: str) -> List[ScanTool]:
-        """根据语言选择扫描器"""
+        """根据语言选择扫描器
+
+        v2.3.0 更新：
+        - go: Semgrep + GoScanner (自定义规则引擎)
+        - 所有已注册扫描仪语言均自动匹配对应规则库，无需手动指定
+        """
         if language == "java":
             return [ScanTool.SEMGREP, ScanTool.FINDSECBUGS]
         elif language == "python":
@@ -220,7 +237,10 @@ class ScannerManager:
                 tools.append(ScanTool.JS_SCANNER)
             return tools
         elif language == "go":
-            return [ScanTool.SEMGREP]
+            tools = [ScanTool.SEMGREP]
+            if ScanTool.GO_SCANNER in self.scanners:
+                tools.append(ScanTool.GO_SCANNER)
+            return tools
         else:
             return [ScanTool.SEMGREP]
 

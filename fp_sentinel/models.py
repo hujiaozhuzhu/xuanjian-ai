@@ -31,6 +31,7 @@ class ScanTool(str, Enum):
     SPOTBUGS = "spotbugs"
     JS_SCANNER = "js_scanner"
     PY_SCANNER = "python_scanner"
+    GO_SCANNER = "go_scanner"
     ESLINT_SECURITY = "eslint_security"
     MANUAL = "manual"
 
