@@ -33,7 +33,7 @@ class TestCodeExcludePattern:
         return RuleFilter({"enabled": True})
 
     @pytest.mark.asyncio
-    async def test_jackson_safe_usage_suppressed(self):
+    async def test_jackson_safe_usage_suppressed(self, rf):
         """纯 ObjectMapper.readValue 无 enableDefaultTyping → 误报"""
         code = "ObjectMapper om = new ObjectMapper(); JsonNode node = om.readValue(data, JsonNode.class);"
         result = _make_result(code)
@@ -41,7 +41,7 @@ class TestCodeExcludePattern:
         assert fr.is_false_positive, "纯 ObjectMapper+readValue 应被标记误报"
 
     @pytest.mark.asyncio
-    async def test_jackson_default_typing_not_suppressed(self):
+    async def test_jackson_default_typing_not_suppressed(self, rf):
         """ObjectMapper + enableDefaultTyping → 不应被抑制"""
         code = "ObjectMapper om = new ObjectMapper(); om.enableDefaultTyping(); JsonNode node = om.readValue(data, JsonNode.class);"
         result = _make_result(code, rule_id="java.enableDefaultTyping")
@@ -51,7 +51,7 @@ class TestCodeExcludePattern:
         )
 
     @pytest.mark.asyncio
-    async def test_convert_value_without_default_typing_suppressed(self):
+    async def test_convert_value_without_default_typing_suppressed(self, rf):
         """convertValue 无 enableDefaultTyping → 误报"""
         code = "MyObj obj = om.convertValue(jsonMap, MyObj.class);"
         result = _make_result(code)
@@ -65,8 +65,8 @@ class TestCodeExcludePattern:
             "enabled": True,
             "custom_rules": [{
                 "name": "test_exclude_rule",
-                "rule_id_pattern": r"test\\.sink",
-                "code_pattern": r" DangerousSink",
+                "rule_id_pattern": r"test\.sink",
+                "code_pattern": r"DangerousSink",
                 "code_exclude_pattern": r"SafetyGuard",
                 "reason": "有 SafetyGuard 时不标记误报",
                 "confidence": 0.8,

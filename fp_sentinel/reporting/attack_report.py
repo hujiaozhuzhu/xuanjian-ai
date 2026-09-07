@@ -101,6 +101,45 @@ _DIFFICULTY_LABEL = {
 }
 
 # 漏洞类型 → 攻防思路知识库（利用场景、前置条件、攻击路径、影响范围）
+# 规则ID前缀 → 知识库键的映射（用于 _look_up_thinking 模糊匹配）
+_RULE_ID_THINKING_MAP: Dict[str, str] = {
+    "java-objectinputstream-readobject": "deser-java-native",
+    "java-objectinputstream": "deser-java-native",
+    "java-readobject": "deser-java-native",
+    "java-fastjson-parseobject": "deser-java-fastjson",
+    "java-fastjson": "deser-java-fastjson",
+    "java-shiro-default-key": "deser-java-shiro",
+    "java-shiro-rememberme": "deser-java-shiro",
+    "java-jackson-enabledefaulttyping": "deser-java-jackson",
+    "java-jackson": "deser-java-native",
+    "php-unserialize-user-input": "deser-php-pop",
+    "php-unserialize": "deser-php-pop",
+    "php-phar-metadata-deserialization": "deser-php-phar",
+    "php-phar": "deser-php-phar",
+    "python-pickle-loads-untrusted": "deser-python-pickle",
+    "python-pickle": "deser-python-pickle",
+}
+
+# 规则ID前缀 → 知识库键的映射（用于 _look_up_limitation 模糊匹配）
+_RULE_ID_LIMITATION_MAP: Dict[str, str] = {
+    "java-objectinputstream-readobject": "deser-java-native",
+    "java-objectinputstream": "deser-java-native",
+    "java-readobject": "deser-java-native",
+    "java-fastjson-parseobject": "deser-java-fastjson",
+    "java-fastjson": "deser-java-fastjson",
+    "java-shiro-default-key": "deser-java-shiro",
+    "java-shiro-rememberme": "deser-java-shiro",
+    "java-jackson-enabledefaulttyping": "deser-java-jackson",
+    "java-jackson": "deser-java-native",
+    "php-unserialize-user-input": "deser-php-pop",
+    "php-unserialize": "deser-php-pop",
+    "php-phar-metadata-deserialization": "deser-php-phar",
+    "php-phar": "deser-php-phar",
+    "python-pickle-loads-untrusted": "deser-python-pickle",
+    "python-pickle": "deser-python-pickle",
+}
+
+
 _ATTACK_THINKING_DB: Dict[str, Dict[str, str]] = {
     "sqli": {
         "scenario": "攻击者通过构造恶意 SQL 语句，绕过应用程序逻辑，直接操作数据库",
@@ -172,13 +211,13 @@ _ATTACK_THINKING_DB: Dict[str, Dict[str, str]] = {
     "deser-java-jackson": {
         "scenario": "攻击者利用 Jackson enableDefaultTyping() 多态类型处理，在 JSON 中指定危险类名触发 RCE",
         "prerequisite": "ObjectMapper.enableDefaultTyping() 已启用；Classpath中存在可利用 gadget（如 ClassPathXmlApplicationContext）",
-        "attack_path": "POST JSON with @class → Jackson readValue() → instantiate 指定类 → gadget chain 触发 → RCE",
+        "attack_path": "POST JSON with @class（enableDefaultTyping）→ Jackson readValue() → instantiate 指定类 → gadget chain 触发 → RCE",
         "impact": "远程代码执行、服务器沦陷",
     },
     "deser-java-shiro": {
         "scenario": "攻击者利用 Shiro 默认 AES 密钥（CVE-2016-4437）伪造 RememberMe cookie，实现反序列化 RCE",
         "prerequisite": "Shiro 使用默认密钥 kPH+bIxk5D2deZiIxcaaaA==；存在 CommonsCollections gadget",
-        "attack_path": "ysoserial 生成 gadget → AES-CBC 加密 → Base64 → rememberMe Cookie → Shiro 解密 → readObject → RCE",
+        "attack_path": "ysoserial 生成 gadget → AES-CBC 加密（密钥 kPH+bIxk5D2deZiIxcaaaA==）→ Base64 → rememberMe Cookie → Shiro 解密 → readObject → RCE",
         "impact": "远程代码执行、服务器沦陷、持久化后门",
     },
     "deser-php-pop": {
@@ -312,7 +351,13 @@ _LIMITATION_DB: Dict[str, Dict[str, str]] = {
 def _look_up_thinking(rule_id: str) -> Dict[str, str]:
     """根据 rule_id 检索攻防思路知识库条目（R1-Fix: 优先匹配更具体的键）"""
     rid = (rule_id or "").lower()
-    # 优先匹配更具体的键（较长键优先）
+
+    # 先查映射表精确匹配（R1-Fix: 支持 Semgrep rule_id 直接定位）
+    mapped_key = _RULE_ID_THINKING_MAP.get(rid)
+    if mapped_key and mapped_key in _ATTACK_THINKING_DB:
+        return _ATTACK_THINKING_DB[mapped_key]
+
+    # 回退到原有的子串匹配逻辑
     best_entry: Dict[str, str] = {}
     best_key_len = 0
     for key, entry in _ATTACK_THINKING_DB.items():
@@ -325,6 +370,13 @@ def _look_up_thinking(rule_id: str) -> Dict[str, str]:
 def _look_up_limitation(rule_id: str) -> Dict[str, str]:
     """根据 rule_id 检索可能性问题知识库条目（R1-Fix: 优先匹配更具体的键）"""
     rid = (rule_id or "").lower()
+
+    # 先查映射表精确匹配（R1-Fix: 支持 Semgrep rule_id 直接定位）
+    mapped_key = _RULE_ID_LIMITATION_MAP.get(rid)
+    if mapped_key and mapped_key in _LIMITATION_DB:
+        return _LIMITATION_DB[mapped_key]
+
+    # 回退到原有的子串匹配逻辑
     best_entry: Dict[str, str] = {}
     best_key_len = 0
     for key, entry in _LIMITATION_DB.items():

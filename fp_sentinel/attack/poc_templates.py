@@ -98,6 +98,7 @@ class PocInstance:
     safe_explanation: str
     reference_cve: str
     mode: str
+    description: str = ""             # 漏洞描述（供测试和报告引用）
     verify_hint: str = ""             # 本地特征验证提示（供 target_validator 用）
 
 
@@ -837,6 +838,7 @@ def generate_poc(
         safe_explanation=template.safe_explanation,
         reference_cve=template.reference_cve,
         mode=template.mode,
+        description=template.description,
         verify_hint=template.local_verify_fn_name,
     )
 

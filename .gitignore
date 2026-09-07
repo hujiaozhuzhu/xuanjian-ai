@@ -26,3 +26,6 @@ artifacts-*.xml
 
 # 缓存
 .ruff_cache/
+
+# 临时目录（转移靶场文件用）
+target-lab-temp/

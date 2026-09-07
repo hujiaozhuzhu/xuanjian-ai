@@ -7,7 +7,9 @@ Semgrep 扫描器
 import asyncio
 import json
 import logging
+import os
 import shutil
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
@@ -57,6 +59,20 @@ GO_SECURITY_RULESETS = [
     "p/insecure-transport",
     "p/sql-injection",
 ]
+
+
+def _builtin_rule_path(filename: str) -> Optional[str]:
+    """Resolve a bundled Semgrep YAML rule file shipped with fp-sentinel."""
+    rules_dir = Path(__file__).resolve().parent.parent / "rules" / "semgrep"
+    candidate = rules_dir / filename
+    return str(candidate) if candidate.is_file() else None
+
+
+# P1-Fix: 反序列化专项 Semgrep 规则（Python pickle + PHP Phar 触发点）
+DESER_RULE_FILES = (
+    _builtin_rule_path("python-deserialization-rules.yaml"),
+    _builtin_rule_path("php-phar-deserialization-rules.yaml"),
+)
 
 
 class SemgrepScanner(BaseScanner):
@@ -162,6 +178,11 @@ class SemgrepScanner(BaseScanner):
             }.get(language, PYTHON_SECURITY_RULESETS)
             for r in default_rulesets:
                 cmd.extend(["--config", r])
+
+        # P1-Fix/P3-Fix: 自动追加反序列化专项规则
+        for builtin_rule in DESER_RULE_FILES:
+            if builtin_rule:
+                cmd.extend(["--config", builtin_rule])
 
         # 语言过滤
         if language and language != "auto":

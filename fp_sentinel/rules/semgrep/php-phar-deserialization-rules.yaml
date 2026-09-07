@@ -1,0 +1,83 @@
+rules:
+  - id: php-phar-file-exists
+    pattern: file_exists(...)
+    message: "检测到 file_exists() 调用。当参数可控且可能为 phar:// 包装器时，会触发 Phar 元数据反序列化导致 RCE。请校验输入不包含 phar:// 协议。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://www.php.net/manual/en/phar.fileformat.terms.php"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-phar-file-get-contents
+    pattern: file_get_contents(...)
+    message: "检测到 file_get_contents() 调用。当参数可控且可能为 phar:// 包装器时，会触发 Phar 元数据反序列化导致 RCE。请校验输入不包含 phar:// 协议。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-phar-fopen
+    pattern: fopen(...)
+    message: "检测到 fopen() 调用。当参数可控且可能为 phar:// 包装器时，会触发 Phar 元数据反序列化导致 RCE。请校验输入不包含 phar:// 协议。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-phar-is-file
+    pattern: is_file(...)
+    message: "检测到 is_file() 调用。当参数可控且可能为 phar:// 包装器时，会触发 Phar 元数据反序列化导致 RCE。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-phar-file
+    pattern: file(...)
+    message: "检测到 file() 调用。当参数可控且可能为 phar:// 包装器时，会触发 Phar 元数据反序列化导致 RCE。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-unserialize-user-input
+    patterns:
+      - pattern: unserialize(...)
+    message: "检测到 unserialize() 调用。反序列化用户输入可能导致 POP 链 RCE。请使用 json_decode 替代，或对数据实施 HMAC 校验。"
+    languages:
+      - php
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
