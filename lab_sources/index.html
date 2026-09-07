@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>反序列化漏洞靶场 - 首页</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Arial', sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 20px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        .header { background: rgba(255, 255, 255, 0.95); color: #333; padding: 40px; border-radius: 20px; margin-bottom: 30px; text-align: center; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); }
+        .header h1 { font-size: 2.5em; margin-bottom: 15px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+        .header p { font-size: 1.2em; color: #666; }
+        .warning-banner { background: #fff3cd; color: #856404; padding: 15px; border-radius: 10px; margin-bottom: 30px; border-left: 5px solid #ffc107; text-align: center; }
+        .vuln-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 25px; }
+        .vuln-card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 5px 15px rgba(0, 0, 0, 0.1); transition: transform 0.3s, box-shadow 0.3s; }
+        .vuln-card:hover { transform: translateY(-5px); box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15); }
+        .vuln-card h3 { color: #333; margin-bottom: 10px; font-size: 1.3em; }
+        .vuln-card p { color: #666; margin-bottom: 15px; line-height: 1.6; }
+        .risk-badge { display: inline-block; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; }
+        .risk-high { background: #ff4444; color: white; }
+        .risk-medium { background: #ffbb33; color: white; }
+        .vuln-link { display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 24px; border-radius: 25px; text-decoration: none; margin-top: 10px; transition: all 0.3s; }
+        .vuln-link:hover { box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4); transform: translateY(-2px); }
+        .section-title { background: white; padding: 20px; border-radius: 15px; margin-bottom: 20px; text-align: center; font-size: 1.5em; color: #333; font-weight: bold; }
+        .java-section { border-left: 5px solid #667eea; }
+        .php-section { border-left: 5px solid #f5576c; }
+    </style>
+    <script>
+        // 动态获取主机地址
+        window.currentHost = window.location.host;
+        window.currentProtocol = window.location.protocol;
+        window.baseUrl = `${window.currentProtocol}//${window.currentHost}`;
+    </script>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>反序列化漏洞靶场</h1>
+            <p>安全教育培训专用 • 包含6个经典反序列化漏洞场景</p>
+        </div>
+
+        <div class="warning-banner">
+            <strong>⚠️ 安全警告：</strong>本靶场仅供安全研究和教育培训使用，严禁用于非法用途！
+        </div>
+
+        <div class="section-title java-section">Java 漏洞场景</div>
+        <div class="vuln-grid">
+            <div class="vuln-card">
+                <h3>1. Java原生反序列化</h3>
+                <p>使用Apache Commons Collections 3.1的Java原生反序列化漏洞，可导致远程代码执行</p>
+                <span class="risk-badge risk-high">高危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18080')+'/vuln1'" class="vuln-link">进入挑战</a>
+            </div>
+
+            <div class="vuln-card">
+                <h3>2. Fastjson反序列化</h3>
+                <p>使用Fastjson 1.2.24的JNDI注入反序列化漏洞，通过@type指定反序列化类</p>
+                <span class="risk-badge risk-high">高危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18080')+'/vuln2'" class="vuln-link">进入挑战</a>
+            </div>
+
+            <div class="vuln-card">
+                <h3>3. Jackson反序列化</h3>
+                <p>使用Jackson 2.9.8的CVE-2017-7525漏洞，通过enableDefaultTyping触发</p>
+                <span class="risk-badge risk-medium">中高危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18080')+'/vuln3'" class="vuln-link">进入挑战</a>
+            </div>
+
+            <div class="vuln-card">
+                <h3>4. Shiro反序列化</h3>
+                <p>使用Apache Shiro 1.2.4的RememberMe功能漏洞，默认密钥导致RCE</p>
+                <span class="risk-badge risk-high">高危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18080')+'/vuln4'" class="vuln-link">进入挑战</a>
+            </div>
+        </div>
+
+        <div class="section-title php-section" style="margin-top: 40px;">PHP 漏洞场景</div>
+        <div class="vuln-grid">
+            <div class="vuln-card">
+                <h3>5. PHP反序列化POP链</h3>
+                <p>通过构造POP链，利用__destruct、__wakeup等魔术方法实现代码执行</p>
+                <span class="risk-badge risk-medium">中危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18081')+'/vuln5.php'" class="vuln-link">进入挑战</a>
+            </div>
+
+            <div class="vuln-card">
+                <h3>6. PHP Phar反序列化</h3>
+                <p>通过文件上传触发Phar文件的元数据反序列化，绕过文件类型检测</p>
+                <span class="risk-badge risk-medium">中高危</span><br>
+                <a href="javascript:void(0)" onclick="window.location.href='http://'+window.currentHost.replace(':1008',':18081')+'/vuln6.php'" class="vuln-link">进入挑战</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

@@ -167,6 +167,11 @@ class RuleFilter:
             if not re.search(rule["code_pattern"], scan_result.code):
                 return False
 
+        # 排除代码模式（P2-Fix: 命中此模式则该规则不生效）
+        if "code_exclude_pattern" in rule:
+            if re.search(rule["code_exclude_pattern"], scan_result.code):
+                return False
+
         # 匹配严重程度
         if "severity" in rule:
             if isinstance(rule["severity"], list):

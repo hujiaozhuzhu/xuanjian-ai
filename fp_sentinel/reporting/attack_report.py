@@ -156,6 +156,49 @@ _ATTACK_THINKING_DB: Dict[str, Dict[str, str]] = {
         "attack_path": "用户可控输入 → 构造恶意 pickle/yaml payload → 服务端反序列化 → __reduce__ 方法触发 RCE",
         "impact": "远程代码执行、服务器完全沦陷",
     },
+    # R1-Fix: 细分类反序列化攻防思路
+    "deser-java-native": {
+        "scenario": "攻击者通过构造恶意 Java 序列化流（ObjectInputStream.readObject()），利用 Classpath 中的 gadget chain（如 CommonsCollections）实现远程代码执行",
+        "prerequisite": "服务端直接使用 ObjectInputStream.readObject() 处理不可信输入；Classpath 中存在 CommonsCollections/CommonsBeanutils 等已知 gadget 依赖；无 ObjectInputFilter 白名单校验",
+        "attack_path": "POST 不可信数据 → Base64 解码 → ObjectInputStream.readObject() → 自动调用 gadget 链（如 InvokerTransformer.transform()）→ Runtime.exec() → RCE",
+        "impact": "服务器完全被控制、内网横向移动、数据窃取、勒索加密、持久化后门",
+    },
+    "deser-java-fastjson": {
+        "scenario": "攻击者利用 Fastjson @type 字段指定危险类名，触发 JNDI 注入加载远程恶意类实现 RCE",
+        "prerequisite": "Fastjson <= 1.2.24 且未关闭 AutoType；攻击者可搭建恶意 LDAP/RMI 服务；目标存在对应 gadget 类",
+        "attack_path": "POST JSON with @type → Fastparser.parseObject() → JNDI lookup(ldap://attacker/Exploit) → 加载恶意 class → 静态代码块执行 → RCE",
+        "impact": "远程代码执行、服务器沦陷、数据窃取",
+    },
+    "deser-java-jackson": {
+        "scenario": "攻击者利用 Jackson enableDefaultTyping() 多态类型处理，在 JSON 中指定危险类名触发 RCE",
+        "prerequisite": "ObjectMapper.enableDefaultTyping() 已启用；Classpath中存在可利用 gadget（如 ClassPathXmlApplicationContext）",
+        "attack_path": "POST JSON with @class → Jackson readValue() → instantiate 指定类 → gadget chain 触发 → RCE",
+        "impact": "远程代码执行、服务器沦陷",
+    },
+    "deser-java-shiro": {
+        "scenario": "攻击者利用 Shiro 默认 AES 密钥（CVE-2016-4437）伪造 RememberMe cookie，实现反序列化 RCE",
+        "prerequisite": "Shiro 使用默认密钥 kPH+bIxk5D2deZiIxcaaaA==；存在 CommonsCollections gadget",
+        "attack_path": "ysoserial 生成 gadget → AES-CBC 加密 → Base64 → rememberMe Cookie → Shiro 解密 → readObject → RCE",
+        "impact": "远程代码执行、服务器沦陷、持久化后门",
+    },
+    "deser-php-pop": {
+        "scenario": "攻击者通过 PHP unserialize() 构造 POP 链（Property-Oriented Programming），利用魔术方法链（__destruct/__wakeup/__toString/__invoke）实现 RCE",
+        "prerequisite": "unserialize() 处理用户输入；代码中存在可串联的魔术方法链（如 Logger.__destruct → CommandExecutor.__invoke → system）",
+        "attack_path": "构造 POP 链 → base64_encode(serialize($obj)) → POST to unserialize endpoint → __destruct() 触发 → gadget chain 执行 → system() → RCE",
+        "impact": "远程代码执行、服务器沦陷",
+    },
+    "deser-php-phar": {
+        "scenario": "攻击者通过上传伪装成图片的 Phar 文件，利用 Phar 元数据自动反序列化触发 RCE",
+        "prerequisite": "phar.readonly=0；存在文件上传功能；服务端代码使用 file_exists/fopen 等操作上传目录中的文件",
+        "attack_path": "构造恶意 Phar（GIF89a 头 + CommandExecutor 元数据）→ 上传 → file_exists(phar://...) 触发 → 自动反序列化 metadata → __invoke → system() → RCE",
+        "impact": "远程代码执行、服务器沦陷",
+    },
+    "deser-python-pickle": {
+        "scenario": "攻击者通过构造恶意 pickle 数据，利用 __reduce__ 方法在反序列化时执行任意系统命令",
+        "prerequisite": "pickle.loads() 处理不可信数据；无 HMAC 签名校验",
+        "attack_path": "构造 __reduce__ gadget → pickle.dumps(EvilClass()) → base64 → POST → pickle.loads() → __reduce__ 返回 (os.system, ('id',)) → RCE",
+        "impact": "远程代码执行、服务器沦陷",
+    },
     "jwt": {
         "scenario": "攻击者利用弱密钥或 algorithm=none 伪造 JWT token，冒充任意用户身份",
         "prerequisite": "JWT 使用弱密钥（可被离线暴力破解）或接受 algorithm=none",
@@ -231,12 +274,16 @@ _LIMITATION_DB: Dict[str, Dict[str, str]] = {
 
 
 def _look_up_thinking(rule_id: str) -> Dict[str, str]:
-    """根据 rule_id 检索攻防思路知识库条目"""
+    """根据 rule_id 检索攻防思路知识库条目（R1-Fix: 优先匹配更具体的键）"""
     rid = (rule_id or "").lower()
+    # 优先匹配更具体的键（较长键优先）
+    best_entry: Dict[str, str] = {}
+    best_key_len = 0
     for key, entry in _ATTACK_THINKING_DB.items():
-        if key in rid:
-            return entry
-    return {}
+        if key in rid and len(key) > best_key_len:
+            best_entry = entry
+            best_key_len = len(key)
+    return best_entry
 
 
 def _look_up_limitation(rule_id: str) -> Dict[str, str]:
