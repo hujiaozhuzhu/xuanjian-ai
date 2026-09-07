@@ -19,6 +19,20 @@ except ImportError:
     PYTHON_SECURITY_RULES = []
     PYTHON_RULES_INDEX = {}
 
+# Go 规则（v2.3.0）
+try:
+    from .go import (
+        GO_SECURITY_RULES,
+        GO_RULES_INDEX,
+        GO_SECURITY_GUARD_PATTERNS,
+        GO_FALSE_POSITIVE_RULES,
+    )
+except ImportError:
+    GO_SECURITY_RULES = []
+    GO_RULES_INDEX = {}
+    GO_SECURITY_GUARD_PATTERNS = {}
+    GO_FALSE_POSITIVE_RULES = []
+
 __all__ = [
     "JAVA_FALSE_POSITIVE_RULES",
     "JAVA_SECURITY_GUARD_PATTERNS",
@@ -27,4 +41,8 @@ __all__ = [
     "JS_SECURITY_GUARD_PATTERNS",
     "PYTHON_SECURITY_RULES",
     "PYTHON_RULES_INDEX",
+    "GO_SECURITY_RULES",
+    "GO_RULES_INDEX",
+    "GO_SECURITY_GUARD_PATTERNS",
+    "GO_FALSE_POSITIVE_RULES",
 ]

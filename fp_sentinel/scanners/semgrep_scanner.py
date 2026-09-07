@@ -46,6 +46,18 @@ JAVASCRIPT_SECURITY_RULESETS = [
     "p/security-audit",
 ]
 
+# Go 安全规则集 (v2.3.0)
+GO_SECURITY_RULESETS = [
+    "p/golang",
+    "p/owasp-top-ten",
+    "p/security-audit",
+    "p/secrets",
+    "p/r2c-security-audit",
+    "p/command-injection",
+    "p/insecure-transport",
+    "p/sql-injection",
+]
+
 
 class SemgrepScanner(BaseScanner):
     """Semgrep 扫描器"""
@@ -141,11 +153,12 @@ class SemgrepScanner(BaseScanner):
             for r in rulesets:
                 cmd.extend(["--config", r])
         else:
-            # 使用默认规则集
+            # 使用默认规则集 (v2.3.0 新增 Go 规则集路由)
             default_rulesets = {
                 "java": JAVA_SECURITY_RULESETS,
                 "javascript": JAVASCRIPT_SECURITY_RULESETS,
                 "typescript": JAVASCRIPT_SECURITY_RULESETS,
+                "go": GO_SECURITY_RULESETS,
             }.get(language, PYTHON_SECURITY_RULESETS)
             for r in default_rulesets:
                 cmd.extend(["--config", r])
