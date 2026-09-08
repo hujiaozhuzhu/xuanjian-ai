@@ -99,6 +99,13 @@ try:
 except Exception:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
+# 注册隐私计算协同审计子命令（v3.0 — 联邦学习 / 规则共享 / 隐私验证 / 协同任务）
+try:
+    from ..privacy.cli_commands import privacy_app
+    app.add_typer(privacy_app, name="privacy", help="隐私计算协同审计 (v3.0): 联邦学习 / 规则共享 / 隐私验证 / 协同任务")
+except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
+    pass
+
 # 注册自适应误报优化引擎 v3.0 子命令
 try:
     from .fp_optimize_commands import fp_optimize as fp_optimize_app

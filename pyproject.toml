@@ -84,6 +84,8 @@ omit = [
     "fp_sentinel/devops/cli.py",
     "fp_sentinel/devops/routes.py",
     "fp_sentinel/devops/__init__.py",
+    "fp_sentinel/privacy/cli_commands.py",
+    "fp_sentinel/privacy/routes.py",
     "tests/*",
 ]
 
