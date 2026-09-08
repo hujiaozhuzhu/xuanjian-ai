@@ -36,6 +36,10 @@ logger = logging.getLogger(__name__)
 _ENTRY_RULE_PATTERNS = [
     "xss", "ssrf", "open-redirect", "ssti", "prompt-injection",
     "idor", "csrf", "xxe", "nosql",
+    # v3.0: 反序列化入口（用户可控输入直接进入反序列化sink）
+    "objectinputstream", "fastjson-parse", "jackson-readvalue",
+    "unserialize", "php-pop", "php-phar",
+    "rememberme", "shiro-key",
 ]
 
 _SINK_RULE_PATTERNS = [
@@ -43,6 +47,13 @@ _SINK_RULE_PATTERNS = [
     "cmd-injection", "eval", "path-traversal", "path.traversal",
     "deserialization", "deser", "pickle", "yaml", "injection.command",
     "injection.sql",
+    # v3.0: Java/PHP 反序列化sink
+    "objectinputstream-readobject", "fastjson-parseobject",
+    "jackson-defaulttyping", "jackson-readvalue",
+    "php-unserialize", "php-phar-deserialize", "php-phar-file",
+    "php-phar-file-exists", "php-magic-method-pop", "php-system-with-user-input",
+    "java-shiro-rememberme", "java-shiro-hardcoded-key",
+    "java-shiro-aes-cbc", "system-with-user-input",
 ]
 
 _ENTRY_PATH_PATTERNS = ["routes/", "controllers/", "handlers/", "api/", "views/", "pages/"]
@@ -178,15 +189,40 @@ def _build_graph(findings: List[Any]) -> VulnerabilityGraph:
 
     for file_path, group in by_file.items():
         ordered = sorted(group, key=_line_of)
+        # v3.0: POP链检测——unserialize/ObjectInputStream入口触发的魔术方法可能在文件任意位置
+        deser_entries = []
+        magic_sinks = []
+        for f in group:
+            rid = _rule_of(f)
+            if "unserialize" in rid or "objectinputstream" in rid or "fastjson" in rid or \
+               "jackson" in rid or "phar" in rid or "shiro" in rid:
+                deser_entries.append(f)
+            if any(magic in rid for magic in ("pop-sink", "system-with", "magic-method", "phar-deser")):
+                magic_sinks.append(f)
+
         for i in range(len(ordered)):
             for j in range(i + 1, min(i + 4, len(ordered))):
-                # 源(入口类) → 汇(高危类) 才建立数据流边
-                if _is_entry(ordered[i]) or _is_sink(ordered[j]):
+                src = ordered[i]
+                dst = ordered[j]
+                # 标准方向: 入口 → 汇点 (数据流从前到后)
+                if _is_entry(src) or _is_sink(dst):
                     graph.add_edge(GraphEdge(
-                        source=_node_id(ordered[i]),
-                        target=_node_id(ordered[j]),
+                        source=_node_id(src),
+                        target=_node_id(dst),
                         edge_type=EdgeType.DATA_FLOW,
                         weight=1.0,
+                    ))
+
+        # v3.0: POP链专用边——反序列化入口触发文件中任意位置的魔术方法
+        # (unserialize()在后部 line 67 触发 __wakeup/__destruct 在前部 line 11-22)
+        for deser_f in deser_entries:
+            for magic_f in magic_sinks:
+                if _file_of(deser_f) == _file_of(magic_f) and _node_id(deser_f) != _node_id(magic_f):
+                    graph.add_edge(GraphEdge(
+                        source=_node_id(deser_f),
+                        target=_node_id(magic_f),
+                        edge_type=EdgeType.POP_CHAIN,
+                        weight=0.85,
                     ))
 
     # 同目录弱依赖边（跨文件，权重 0.3）

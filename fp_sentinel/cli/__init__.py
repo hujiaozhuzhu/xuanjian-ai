@@ -113,6 +113,13 @@ try:
 except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
     pass
 
+# 注册自动化修复子命令（v3.0 — 修复代码生成 / Diff预览 / 验证 / PR提交）
+try:
+    from ..auto_pr.cli import auto_pr_app
+    app.add_typer(auto_pr_app, name="auto-pr", help="自动化修复 (v3.0): 修复代码生成 / Diff预览 / 验证 / PR提交")
+except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
+    pass
+
 console = create_console()
 
 # ── v2.5.1: enterprise-init 命令（开箱即用一键初始化） ──

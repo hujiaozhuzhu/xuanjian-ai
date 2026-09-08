@@ -24,12 +24,12 @@ SEMGREP_SEVERITY_MAP = {
     "INFO": Severity.LOW,
 }
 
-# Java 安全规则集
+# Java 安全规则集 (v3.0: 移除无效的 p/owasp-java 避免 404 错误)
 JAVA_SECURITY_RULESETS = [
     "p/java",
-    "p/owasp-java",
     "p/security-audit",
     "p/secrets",
+    "p/owasp-top-ten",
 ]
 
 # Python 安全规则集
@@ -80,6 +80,12 @@ DESER_RULE_FILES = (
     _builtin_rule_path("python-deserialization-rules.yaml"),
     _builtin_rule_path("php-phar-deserialization-rules.yaml"),
 )
+
+# v3.0: Java 反序列化全谱系规则 (ObjectInputStream / Fastjson / Jackson / Shiro)
+JAVA_DESER_RULE_FILE = _builtin_rule_path("java-deserialization-rules.yaml")
+
+# v3.0: PHP POP链 + Phar + unserialize + XSS 增强规则
+PHP_POP_DESER_RULE_FILE = _builtin_rule_path("php-pop-deser-rules.yaml")
 
 
 class SemgrepScanner(BaseScanner):
@@ -155,6 +161,28 @@ class SemgrepScanner(BaseScanner):
             logger.error(f"Semgrep scan failed: {e}")
             return []
 
+    def _validate_rulesets(self, rulesets: List[str]) -> List[str]:
+        """v3.0: 过滤无效的 Semgrep registry 规则集，避免因单个规则集 404 导致整个扫描失败"""
+        import subprocess
+        valid = []
+        for rs in rulesets:
+            if rs.startswith("p/"):
+                # registry 规则集：尝试探测是否可用
+                try:
+                    r = subprocess.run(
+                        ["semgrep", "check", "--config", rs, "--dryrun", "--quiet"],
+                        capture_output=True, timeout=15,
+                    )
+                    if r.returncode == 0:
+                        valid.append(rs)
+                    else:
+                        logger.warning(f"Semgrep ruleset {rs} unavailable (HTTP {r.returncode}), skipping")
+                except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+                    logger.warning(f"Semgrep ruleset {rs} check failed, skipping")
+            else:
+                valid.append(rs)
+        return valid or rulesets  # 如果全部无效，回退到原始列表
+
     def _build_command(
         self,
         target_path: str,
@@ -170,6 +198,9 @@ class SemgrepScanner(BaseScanner):
         纯语言过滤模式下使用。重构逻辑确保二者互斥。
         """
         cmd = ["semgrep", "scan", "--json", "--quiet"]
+
+        # v3.0: 单文件扫描需要 --no-git-ignore
+        cmd.append("--no-git-ignore")
 
         # 设置并行数
         cmd.extend(["--jobs", str(self.jobs)])
@@ -204,6 +235,14 @@ class SemgrepScanner(BaseScanner):
             elif language in (None, "auto"):
                 # auto 模式保留全部（向后兼容）
                 config_entries.append(builtin_rule)
+
+        # v3.0: Java 反序列化全谱系规则（ObjectInputStream/Fastjson/Jackson/Shiro）
+        if JAVA_DESER_RULE_FILE and language in ("java", None, "auto"):
+            config_entries.append(JAVA_DESER_RULE_FILE)
+
+        # v3.0: PHP POP链 + Phar + unserialize + XSS 增强规则
+        if PHP_POP_DESER_RULE_FILE and language in ("php", None, "auto"):
+            config_entries.append(PHP_POP_DESER_RULE_FILE)
 
         # 添加 --config 参数
         for entry in config_entries:

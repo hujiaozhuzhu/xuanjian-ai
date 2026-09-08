@@ -78,9 +78,12 @@ _RULE_TRANSITION_STRENGTH: Dict[Tuple[str, str], float] = {
     ("ssti", "command-injection"): 0.5,
     ("ssti", "eval"): 0.4,
     ("nosql-injection", "command-injection"): 0.2,
-    # 反序列化通杀
-    ("deserialization", "command-injection"): 0.6,
+    # 反序列化通杀（Java原生/Fastjson/Jackson/Shiro/PHP POP链/XClass免杀）
+    ("deserialization", "command-injection"): 0.75,
     ("deserialization", "sql-injection"): 0.3,
+    ("deserialization", "eval"): 0.5,
+    ("deserialization", "ssrf"): 0.3,
+    ("deserialization", "path-traversal"): 0.2,
     # XXE
     ("xxe", "ssrf"): 0.4,
     ("xxe", "path-traversal"): 0.3,
@@ -114,11 +117,42 @@ _IMPACT_WEIGHT = {
 def _normalize_rule_for_transition(rule_id: str) -> str:
     """提取规则 ID 中的标准漏洞类型名称"""
     rid = rule_id.lower()
-    for key in (
+    # 优先匹配更具体的模式
+    specific_keys = (
+        # Java 反序列化
+        "objectinputstream-readobject", "object-input-stream",
+        "fastjson-parseobject", "fastjson-parse",
+        "jackson-defaulttyping", "jackson-readvalue",
+        "shiro-rememberme", "shiro-hardcoded-key", "shiro-aes-cbc",
+        # PHP 反序列化
+        "php-unserialize", "php-phar", "php-magic-method-pop",
+        "php-system-with-user-input",
+        # XSS
+        "xss", "php-xss",
+    )
+    for key in specific_keys:
+        if key in rid:
+            # 映射到标准分类
+            if key.startswith(("objectinputstream", "object-input-stream")):
+                return "deserialization"
+            if key.startswith(("fastjson",)):
+                return "deserialization"
+            if key.startswith(("jackson",)):
+                return "deserialization"
+            if key.startswith(("shiro",)):
+                return "deserialization"
+            if key.startswith(("php-unserialize", "php-phar", "php-magic-method-pop")):
+                return "deserialization"
+            if key == "php-system-with-user-input":
+                return "command-injection"
+            return key
+    # 通用匹配
+    generic_keys = (
         "sql-injection", "command-injection", "path-traversal", "deserialization",
-        "open-redirect", "nosql-injection", "ssrf", "ssti", "xss", "xxe",
+        "open-redirect", "nosql-injection", "ssrf", "ssti", "xxe",
         "eval", "pickle", "yaml", "jwt", "idor",
-    ):
+    )
+    for key in generic_keys:
         if key in rid:
             return key
     return rid
