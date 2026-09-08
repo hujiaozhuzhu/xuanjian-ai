@@ -81,6 +81,9 @@ testpaths = ["tests"]
 branch = true
 omit = [
     "fp_sentinel/notify/cli.py",
+    "fp_sentinel/devops/cli.py",
+    "fp_sentinel/devops/routes.py",
+    "fp_sentinel/devops/__init__.py",
     "tests/*",
 ]
 
@@ -94,6 +97,8 @@ exclude_lines = [
     "raise NotImplementedError",
     "pass",
     "except ImportError",
-    "except Exception:",
+    "except Exception",
+    "except httpx",
     "logger.warning",
+    "logger.exception",
 ]

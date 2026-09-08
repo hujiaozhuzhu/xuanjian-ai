@@ -417,6 +417,8 @@ const app = createApp({
         nextTick(drawPieChart);
       } else if (index === 'findings') {
         loadFindings();
+      } else if (index === 'fp-stats') {
+        loadFpStats();
       }
     }
 
@@ -541,6 +543,197 @@ const app = createApp({
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // ── FP Optimize v3.0 误报统计 ──
+    const fpStats = reactive({
+      total_feedbacks: 0,
+      fp_feedbacks: 0,
+      tp_feedbacks: 0,
+      unsure_feedbacks: 0,
+      fp_rate: 0,
+      target_fp_rate: 0.01,
+      fp_rate_trend: 'stable',
+      optimization_count: 0,
+    });
+    const fpRecommendations = ref([]);
+    const fpTopRules = ref([]);
+    const fpPatterns = ref([]);
+    const fpTrendData = ref([]);
+    const fpOptimizing = ref(false);
+
+    async function loadFpStats() {
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/dashboard');
+        const data = await resp.json();
+        if (data.dashboard?.feedback_stats) {
+          Object.assign(fpStats, data.dashboard.feedback_stats);
+        }
+        if (data.dashboard?.trend_points) {
+          fpTrendData.value = data.dashboard.trend_points;
+        }
+      } catch (e) {
+        console.warn('加载FP统计失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/recommendations');
+        const data = await resp.json();
+        fpRecommendations.value = data.recommendations || [];
+      } catch (e) {
+        console.warn('加载FP建议失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/stats');
+        const data = await resp.json();
+        fpTopRules.value = data.stats?.top_fp_rules || [];
+      } catch (e) {
+        console.warn('加载FP规则失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/fp-patterns');
+        const data = await resp.json();
+        fpPatterns.value = data.patterns || [];
+      } catch (e) {
+        console.warn('加载FP模式失败:', e);
+      }
+
+      await nextTick();
+      drawFpTrendChart();
+    }
+
+    async function triggerFpOptimize() {
+      fpOptimizing.value = true;
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/optimize', {
+          method: 'POST',
+          body: JSON.stringify({ dry_run: false }),
+        });
+        const data = await resp.json();
+        ElementPlus.ElMessage.success('优化完成: ' + data.status);
+        loadFpStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('优化失败: ' + e.message);
+      } finally {
+        fpOptimizing.value = false;
+      }
+    }
+
+    async function buildFpProfile() {
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/profile/build?project_id=default', {
+          method: 'POST',
+        });
+        const data = await resp.json();
+        ElementPlus.ElMessage.success('代码风格画像构建完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('画像构建失败: ' + e.message);
+      }
+    }
+
+    // ── 误报率趋势折线图（纯 Canvas） ──
+    function drawFpTrendChart() {
+      const canvas = document.getElementById('fp-trend-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const W = 600, H = 250;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+
+      const data = fpTrendData.value;
+      if (!data || data.length === 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无趋势数据（积累反馈后将自动生成）', W / 2, H / 2);
+        return;
+      }
+
+      const pad = { top: 30, right: 20, bottom: 40, left: 55 };
+      const cw = W - pad.left - pad.right;
+      const ch = H - pad.top - pad.bottom;
+
+      // 计算Y轴范围
+      const rates = data.map(d => d.fp_rate || 0);
+      const maxRate = Math.max(...rates, 0.05);
+      const minRate = 0;
+
+      // 网格
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + (ch / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + cw, y);
+        ctx.stroke();
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        const val = (maxRate * (1 - i / 4) * 100).toFixed(1);
+        ctx.fillText(val + '%', pad.left - 5, y + 4);
+      }
+
+      // 目标线 (1%)
+      const targetY = pad.top + ch * (1 - 0.01 / maxRate);
+      if (targetY >= pad.top && targetY <= pad.top + ch) {
+        ctx.strokeStyle = '#3fb950';
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, targetY);
+        ctx.lineTo(pad.left + cw, targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#3fb950';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('目标 1%', pad.left + cw + 2, targetY + 4);
+      }
+
+      // 折线
+      if (data.length > 1) {
+        ctx.strokeStyle = '#58a6ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        data.forEach((d, i) => {
+          const x = pad.left + (i / (data.length - 1)) * cw;
+          const y = pad.top + ch * (1 - (d.fp_rate || 0) / maxRate);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // 数据点
+        ctx.fillStyle = '#58a6ff';
+        data.forEach((d, i) => {
+          const x = pad.left + (i / (data.length - 1)) * cw;
+          const y = pad.top + ch * (1 - (d.fp_rate || 0) / maxRate);
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // X轴标签
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      const labelStep = Math.max(1, Math.floor(data.length / 5));
+      data.forEach((d, i) => {
+        if (i % labelStep === 0 || i === data.length - 1) {
+          const x = pad.left + (i / Math.max(1, data.length - 1)) * cw;
+          const date = d.timestamp || d.date || '';
+          const short = typeof date === 'string' ? date.slice(5, 10) : '';
+          ctx.fillText(short, x, H - 10);
+        }
+      });
+    }
+
     // ── 初始化 ──
     onMounted(async () => {
       await loadStats();
@@ -608,6 +801,16 @@ const app = createApp({
 
       // WebSocket
       wsConnected,
+
+      // FP Optimize
+      fpStats,
+      fpRecommendations,
+      fpTopRules,
+      fpPatterns,
+      fpOptimizing,
+      loadFpStats,
+      triggerFpOptimize,
+      buildFpProfile,
 
       // 工具
       severityTagType,

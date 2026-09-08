@@ -23,6 +23,7 @@ import aiosqlite
 
 from ..enterprise_perm.models import PERM_SCHEMA_SQL, ROLE_PERMISSIONS
 from ..enterprise_task.repository import TASK_SCHEMA_SQL
+from ..devops.repository import SCHEMA_SQL as DEVOPS_SCHEMA_SQL
 from ..notify.store import SCHEMA_SQL as NOTIFY_SCHEMA_SQL
 
 logger = logging.getLogger(__name__)
@@ -186,6 +187,7 @@ async def initialize_enterprise_database(
             ("main", MAIN_SCHEMA_SQL),
             ("perm", PERM_SCHEMA_SQL),
             ("task", TASK_SCHEMA_SQL),
+            ("devops", DEVOPS_SCHEMA_SQL),
         ]
         for label, schema_sql in schemas_to_apply:
             await conn.executescript(schema_sql)
@@ -196,8 +198,13 @@ async def initialize_enterprise_database(
         key_main_tables = ["projects", "scan_history", "findings", "false_positive_marks"]
         key_perm_tables = ["users", "user_project_roles", "audit_log", "permission_definitions"]
         key_task_tables = ["et_tasks", "et_task_transitions", "et_task_comments"]
+        key_devops_tables = [
+            "do_finding_ticket_mapping",
+            "do_sync_record",
+            "do_pipeline_gate_record",
+        ]
 
-        for t in key_main_tables + key_perm_tables + key_task_tables:
+        for t in key_main_tables + key_perm_tables + key_task_tables + key_devops_tables:
             if t not in existing_tables:
                 result["tables_created"].append(t)
 

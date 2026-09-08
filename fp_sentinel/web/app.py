@@ -267,6 +267,15 @@ def create_web_app(server=None) -> FastAPI:
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
+    # ── FP Optimize v3.0 自适应误报引擎路由 ──
+    try:
+        from .fp_routes import create_fp_optimize_router
+        fp_router = create_fp_optimize_router()
+        app.include_router(fp_router)
+        logger.info("FP Optimize v3.0 API routes mounted at /api/v1/fp-optimize")
+    except Exception as e:
+        logger.warning("FP Optimize routes not available: %s", e)
+
     # 保存 server 引用
     app.state.fp_server = server
 

@@ -29,6 +29,7 @@
           <el-menu-item index="dashboard">仪表板</el-menu-item>
           <el-menu-item index="scan">扫描</el-menu-item>
           <el-menu-item index="findings">发现列表</el-menu-item>
+          <el-menu-item index="fp-stats">误报统计</el-menu-item>
         </el-menu>
         <div class="header-right">
           <span class="ws-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
@@ -265,6 +266,110 @@
               共 {{ findingsList.length }} 条结果
             </div>
           </div>
+        </div>
+
+        <!-- ═══ 误报统计页面 (v3.0 自适应引擎) ═══ -->
+        <div v-if="currentPage === 'fp-stats'" class="page-fp-stats">
+          <!-- 统计概览卡片 -->
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#58a6ff">
+                <div class="stat-value" style="color:#58a6ff">{{ fpStats.total_feedbacks }}</div>
+                <div class="stat-label">总反馈数</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#f85149">
+                <div class="stat-value" style="color:#f85149">{{ (fpStats.fp_rate * 100).toFixed(2) }}%</div>
+                <div class="stat-label">当前误报率</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#3fb950">
+                <div class="stat-value" style="color:#3fb950">{{ (fpStats.target_fp_rate * 100).toFixed(0) }}%</div>
+                <div class="stat-label">目标误报率</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#d29922">
+                <div class="stat-value" style="color:#d29922">{{ fpStats.optimization_count }}</div>
+                <div class="stat-label">优化次数</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 误报率趋势图 -->
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="16">
+              <div class="panel">
+                <h3 class="panel-title">📉 误报率趋势 (30天)</h3>
+                <div class="chart-container">
+                  <canvas id="fp-trend-chart" width="600" height="250"></canvas>
+                </div>
+                <div style="text-align:center;margin-top:8px">
+                  <el-tag :type="fpStats.fp_rate_trend === 'decreasing' ? 'success' : fpStats.fp_rate_trend === 'increasing' ? 'danger' : 'info'">
+                    趋势: {{ fpStats.fp_rate_trend === 'decreasing' ? '下降中' : fpStats.fp_rate_trend === 'increasing' ? '上升中' : '稳定' }}
+                  </el-tag>
+                </div>
+              </div>
+            </el-col>
+
+            <!-- 优化建议 -->
+            <el-col :xs="24" :sm="8">
+              <div class="panel">
+                <h3 class="panel-title">💡 优化建议</h3>
+                <div v-if="fpRecommendations.length === 0" class="empty-hint">暂无建议，继续积累反馈数据</div>
+                <div v-for="(rec, idx) in fpRecommendations" :key="idx" class="recommendation-card">
+                  <el-tag :type="rec.priority === 'high' ? 'danger' : rec.priority === 'medium' ? 'warning' : rec.priority === 'success' ? 'success' : 'info'" size="small">
+                    {{ rec.priority === 'high' ? '高' : rec.priority === 'medium' ? '中' : rec.priority === 'success' ? '达标' : '信息' }}
+                  </el-tag>
+                  <div class="rec-message">{{ rec.message }}</div>
+                  <div class="rec-action">→ {{ rec.action }}</div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 高频误报规则 & 误报模式识别 -->
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">🔥 高频误报规则 TOP10</h3>
+                <el-table :data="fpTopRules" size="small" max-height="300">
+                  <el-table-column prop="rule_id" label="规则ID" min-width="160" />
+                  <el-table-column prop="total" label="总数" width="70" />
+                  <el-table-column prop="fp_count" label="误报数" width="70" />
+                  <el-table-column label="误报率" width="90">
+                    <template #default="{row}">{{ row.fp_pct }}%</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">🔍 系统性误报模式</h3>
+                <div v-if="fpPatterns.length === 0" class="empty-hint">暂无识别到的误报模式</div>
+                <div v-for="(p, idx) in fpPatterns" :key="idx" class="fp-pattern-card">
+                  <el-tag type="warning" size="small">{{ (p.fp_probability * 100).toFixed(0) }}%</el-tag>
+                  <span class="pattern-rule">{{ p.rule_id }}</span>
+                  <span class="pattern-desc">{{ p.description }}</span>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 操作按钮 -->
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <div class="panel" style="padding:16px">
+                <el-button type="primary" :loading="fpOptimizing" @click="triggerFpOptimize">
+                  {{ fpOptimizing ? '优化中...' : '运行自动优化' }}
+                </el-button>
+                <el-button @click="buildFpProfile">构建代码风格画像</el-button>
+                <el-button @click="loadFpStats">刷新数据</el-button>
+              </div>
+            </el-col>
+          </el-row>
         </div>
 
         <!-- ═══ 详情页（抽屉） ═══ -->

@@ -427,6 +427,55 @@ body {
 
 /* ─────── 响应式 ─────── */
 
+/* ─────── FP Optimize v3.0 误报统计页面 ─────── */
+
+.page-fp-stats {
+  animation: fadeIn 0.2s ease;
+}
+
+.recommendation-card {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+}
+
+.rec-message {
+  font-size: 13px;
+  margin: 6px 0 4px;
+  line-height: 1.5;
+}
+
+.rec-action {
+  font-size: 12px;
+  color: var(--accent-blue);
+}
+
+.fp-pattern-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.pattern-rule {
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--accent-orange);
+}
+
+.pattern-desc {
+  color: var(--text-muted);
+  font-size: 12px;
+  margin-left: auto;
+  text-align: right;
+}
+
 @media (max-width: 768px) {
   .app-header {
     flex-wrap: wrap;
@@ -448,5 +497,14 @@ body {
   }
   .toolbar-actions {
     width: 100%;
+  }
+  .fp-pattern-card {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .pattern-desc {
+    text-align: left;
+    margin-left: 0;
   }
 }

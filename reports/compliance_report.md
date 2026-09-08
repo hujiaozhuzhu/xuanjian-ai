@@ -1,6 +1,6 @@
-# 玄鉴合规审计摘要 — test_scan_json1
+# 玄鉴合规审计摘要 — test_scan_verbose0
 
-> 生成时间: 2026-09-07 16:13:01 UTC  |  项目路径: C:\Users\lenovo\AppData\Local\Temp\pytest-of-lenovo\pytest-180\test_scan_json1  |  玄鉴 fp-sentinel v2.2.0
+> 生成时间: 2026-09-08 01:05:52 UTC  |  项目路径: C:\Users\lenovo\AppData\Local\Temp\pytest-of-lenovo\pytest-185\test_scan_verbose0  |  玄鉴 fp-sentinel v2.2.0
 
 ## ① 趋势对比
 
@@ -29,7 +29,7 @@
 - 预计工时: 45 分钟
 - 事故背景: eval(用户输入) 直接等价于 RCE。
 ```diff
---- a/C:\Users\lenovo\AppData\Local\Temp\pytest-of-lenovo\pytest-180\test_scan_json1\app.js
+--- a/C:\Users\lenovo\AppData\Local\Temp\pytest-of-lenovo\pytest-185\test_scan_verbose0\app.js
 +++ b/suggested-fix
 @@ 修复建议 @@
 -eval(x);

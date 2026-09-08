@@ -92,6 +92,20 @@ try:
 except ImportError:  # noqa: BLE001 — 可选模块缺失时静默降级
     pass
 
+# 注册 DevSecOps 对接子命令（v3.0 —— GitLab/Jira/GitHub 同步 + Pipeline 卡点 + 工单联动）
+try:
+    from ..devops.cli import devops_app
+    app.add_typer(devops_app, name="devops", help="DevSecOps 对接（GitLab/Jira/GitHub + Pipeline 卡点）")
+except Exception:  # noqa: BLE001 — 可选模块缺失时静默降级
+    pass
+
+# 注册自适应误报优化引擎 v3.0 子命令
+try:
+    from .fp_optimize_commands import fp_optimize as fp_optimize_app
+    app.add_typer(fp_optimize_app, name="fp", help="自适应误报引擎 (v3.0): 反馈收集 / 自动优化 / 代码风格画像 / 误报统计")
+except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
+    pass
+
 console = create_console()
 
 # ── v2.5.1: enterprise-init 命令（开箱即用一键初始化） ──
