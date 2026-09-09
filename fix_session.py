@@ -1,0 +1,5 @@
+content = open('fp_sentinel/auth/session.py').read()
+content = content.replace('岑',岑岑""岑,')
+content = content.replace岑岑岑岑岑岑('', ',')
+open('fp_sentinel/auth/session.py','w').write(content)
+print('Fix attempt')

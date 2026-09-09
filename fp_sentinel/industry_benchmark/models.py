@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 # --- Industry Enum ---
 
 class Industry(str, Enum):
-    """Supported industries (v3.0, 11 industries)"""
+    """Supported industries (v3.1, 14 industries including 3 new verticals)"""
     INTERNET = "internet"
     FINANCE = "finance"
     GOVERNMENT = "government"
@@ -29,6 +29,10 @@ class Industry(str, Enum):
     TRANSPORTATION = "transportation"
     INSURANCE = "insurance"
     SECURITIES = "securities"
+    # v3.1 new industries
+    VIDEO_SURVEILLANCE = "video_surveillance"
+    INSTANT_MESSAGING = "instant_messaging"
+    IOT = "iot"
 
 
 # --- Industry Metadata ---
