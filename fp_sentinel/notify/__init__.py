@@ -1,11 +1,13 @@
 """
-玄鉴 v2.5.0 — 企业通知模块 (Enterprise Notification Module)
+玄鉴 v3.1.0 — 企业通知模块 (Enterprise Notification Module)
 
 通过 Webhook 方式将高危漏洞自动推送到企业内部 IM 工具。
 支持飞书 / 钉钉 / 企业微信，自定义推送规则、频率、接收人，支持状态变更通知。
 
 安全红线：S1 (仅内部 IM) / S2 (禁止修改代码) / S4 (禁止真实攻击) / S7 (路径白名单)
 """
+
+__version__ = "3.1.0"
 
 from .models import (
     ChannelTestResult,

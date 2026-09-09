@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="X-Content-Type-Options" content="nosniff">
+  <meta http-equiv="X-Frame-Options" content="DENY">
+  <meta http-equiv="Referrer-Policy" content="strict-origin-when-cross-origin">
+  <title>玄鉴 XuanJian v3.1 - AI驱动代码安全审计平台</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="xj-app" class="app-root" role="application" aria-label="玄鉴安全审计平台">
+    <!-- 顶部导航栏 -->
+    <header class="xj-header" id="xj-header">
+      <div class="xj-header-left">
+        <div class="xj-logo" id="xj-logo">
+          <span class="xj-logo-icon">玄</span>
+          <span class="xj-logo-text">玄鉴 <span class="xj-ver">v3.1</span></span>
+        </div>
+        <nav class="xj-nav" id="xj-nav" role="navigation"></nav>
+      </div>
+      <div class="xj-header-right">
+        <span class="xj-ws-indicator" id="xj-ws-indicator" title="实时事件流">
+          <span class="xj-ws-dot" id="xj-ws-dot"></span>
+          <span class="xj-ws-label" id="xj-ws-label">未连接</span>
+        </span>
+      </div>
+    </header>
+    <!-- 主内容区 -->
+    <main class="xj-main" id="xj-main" role="main"></main>
+    <!-- 全局通知容器 -->
+    <div class="xj-toast-container" id="xj-toast-container"></div>
+    <!-- 模态框容器 -->
+    <div class="xj-modal-overlay" id="xj-modal-overlay" hidden></div>
+  </div>
+  <!-- 核心框架 -->
+  <script src="./core/xss-defense.js"></script>
+  <script src="./core/api-client.js"></script>
+  <script src="./core/event-stream.js"></script>
+  <script src="./core/router.js"></script>
+  <script src="./core/ui-engine.js"></script>
+  <!-- 图表引擎（本地化Canvas实现，替代ECharts/Cytoscape.js） -->
+  <script src="./vendor/xj-charts.js"></script>
+  <script src="./vendor/xj-graph.js"></script>
+  <!-- 页面注册器（必须在页面文件之前加载） -->
+  <script src="./pages/pages.js"></script>
+  <!-- 页面 -->
+  <script src="./pages/page-dashboard.js"></script>
+  <script src="./pages/page-scan.js"></script>
+  <script src="./pages/page-findings.js"></script>
+  <script src="./pages/page-profile.js"></script>
+  <script src="./pages/page-reports.js"></script>
+  <script src="./pages/page-settings.js"></script>
+  <script src="./pages/page-ai-pentest.js"></script>
+  <script src="./pages/page-auto-fix.js"></script>
+  <script src="./pages/page-benchmark.js"></script>
+  <script src="./pages/page-privacy.js"></script>
+  <script src="./pages/page-devsecops.js"></script>
+  <!-- 应用启动 -->
+  <script src="./app.js"></script>
+</body>
+</html>

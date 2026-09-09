@@ -419,6 +419,16 @@ const app = createApp({
         loadFindings();
       } else if (index === 'fp-stats') {
         loadFpStats();
+      } else if (index === 'ai-pentest') {
+        aiForm.scanId = currentScanId.value;
+      } else if (index === 'industry') {
+        loadIndustryList();
+      } else if (index === 'privacy') {
+        // privacy loaded on demand
+      } else if (index === 'devops') {
+        refreshDevopsStats();
+      } else if (index === 'settings') {
+        refreshSettings();
       }
     }
 
@@ -559,6 +569,220 @@ const app = createApp({
     const fpPatterns = ref([]);
     const fpTrendData = ref([]);
     const fpOptimizing = ref(false);
+
+    // ── v3.1 AI渗透测试 ──
+    const aiStats = reactive({ attackChains: 0, pocCount: 0, verifiedCount: 0, fixCount: 0 });
+    const aiForm = reactive({ scanId: '', target: 'http://127.0.0.1:1008' });
+    const aiLoading = reactive({ chain: false, poc: false, verify: false });
+    const aiChainReport = ref(null);
+    const aiVerifyResult = ref(null);
+    const aiPocResult = ref(null);
+
+    async function generateAttackChain() {
+      aiLoading.chain = true;
+      try {
+        const findings = findingsList.value.length > 0 ? findingsList.value : [];
+        const resp = await apiFetch('/api/pentest/attack-chain/reason', {
+          method: 'POST',
+          body: JSON.stringify({
+            findings: findings.map(f => ({ id: f.id, rule_id: f.original?.rule_id, severity: f.original?.severity, file: f.original?.file, line: f.original?.line, confidence: f.confidence })),
+            project: 'deser-lab',
+            target: aiForm.target,
+          }),
+        });
+        aiChainReport.value = await resp.json();
+        if (aiChainReport.value?.total_chains != null) aiStats.attackChains = aiChainReport.value.total_chains;
+        ElementPlus.ElMessage.success('攻击链生成完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('攻击链生成失败: ' + e.message);
+      } finally {
+        aiLoading.chain = false;
+      }
+    }
+
+    async function generatePoc() {
+      aiLoading.poc = true;
+      try {
+        const firstFinding = findingsList.value[0];
+        const ruleId = firstFinding?.original?.rule_id || 'objectinputstream';
+        const resp = await apiFetch('/api/pentest/poc/generate-single', {
+          method: 'POST',
+          body: JSON.stringify({
+            rule_id: ruleId,
+            vuln_type: 'deser-java-native',
+            target: '127.0.0.1',
+            file_path: firstFinding?.original?.file || '',
+            line: firstFinding?.original?.line || 0,
+            language: 'shell',
+          }),
+        });
+        aiPocResult.value = await resp.json();
+        aiStats.pocCount = aiPocResult.value ? 1 : 0;
+        ElementPlus.ElMessage.success('PoC生成完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('PoC生成失败: ' + e.message);
+      } finally {
+        aiLoading.poc = false;
+      }
+    }
+
+    async function runAutoVerify() {
+      aiLoading.verify = true;
+      try {
+        const resp = await apiFetch('/api/pentest/verify', {
+          method: 'POST',
+          body: JSON.stringify({
+            scan_id: aiForm.scanId || currentScanId.value,
+            findings: findingsList.value.map(f => ({ id: f.id, rule_id: f.original?.rule_id })),
+          }),
+        });
+        aiVerifyResult.value = await resp.json();
+        if (aiVerifyResult.value?.verified_count != null) aiStats.verifiedCount = aiVerifyResult.value.verified_count;
+        ElementPlus.ElMessage.success('自动验证完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('验证失败: ' + e.message);
+      } finally {
+        aiLoading.verify = false;
+      }
+    }
+
+    async function generateFixPR() {
+      try {
+        const resp = await apiFetch('/api/auto-pr/preview', {
+          method: 'POST',
+          body: JSON.stringify({
+            findings: findingsList.value.slice(0, 10).map(f => ({
+              finding_id: f.id, rule_id: f.original?.rule_id, file_path: f.original?.file,
+              line_start: f.original?.line, line_end: (f.original?.line || 0) + 2,
+              severity: f.original?.severity, language: f.original?.metadata?.language || 'java',
+              code_snippet: f.original?.code || '', category: f.original?.category || '',
+            })),
+          }),
+        });
+        const data = await resp.json();
+        aiStats.fixCount = data.total_generated || 0;
+        ElementPlus.ElMessage.success('修复预览生成完成: ' + (data.total_generated || 0) + ' 个补丁');
+      } catch (e) {
+        ElementPlus.ElMessage.error('PR预览失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 行业基准 ──
+    const industryList = ref({});
+    const industryForm = reactive({
+      industry: 'finance',
+      totalFindings: 10,
+      scanCount: 5,
+      avgRepairDays: 7,
+      complianceScore: 75,
+    });
+    const industryReport = ref(null);
+
+    async function loadIndustryList() {
+      try {
+        const resp = await apiFetch('/api/industry/list');
+        const data = await resp.json();
+        const map = {};
+        (data.industries || []).forEach(i => { map[i.industry] = i.display_name; });
+        industryList.value = map;
+      } catch (e) {
+        industryList.value = { finance: '金融', internet: '互联网', healthcare: '医疗', government: '政务' };
+      }
+    }
+
+    async function runIndustryAnalysis() {
+      try {
+        const resp = await apiFetch('/api/industry/gap-analysis', {
+          method: 'POST',
+          body: JSON.stringify({
+            enterprise: {
+              project_name: '当前项目',
+              industry: industryForm.industry,
+              total_findings: industryForm.totalFindings,
+              scan_count: industryForm.scanCount,
+              avg_repair_days: industryForm.avgRepairDays,
+              compliance_score: industryForm.complianceScore,
+              by_category: { deserialization: 3, sqli: 2, xss: 5 },
+            },
+          }),
+        });
+        industryReport.value = await resp.json();
+        ElementPlus.ElMessage.success('对标分析完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('对标分析失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 隐私协同 ──
+    const privacyForm = reactive({ rounds: 5, minParticipants: 2, standards: ['pipl', 'data_security_law'] });
+    const federateResult = ref(null);
+    const complianceReport = ref(null);
+
+    async function initFederate() {
+      try {
+        const resp = await apiFetch('/api/privacy/federate/initialize', {
+          method: 'POST',
+          body: JSON.stringify({ rounds: privacyForm.rounds, min_participants: privacyForm.minParticipants }),
+        });
+        federateResult.value = await resp.json();
+        ElementPlus.ElMessage.success('联邦训练会话已初始化');
+      } catch (e) {
+        ElementPlus.ElMessage.error('初始化失败: ' + e.message);
+      }
+    }
+
+    async function runComplianceCheck() {
+      try {
+        const resp = await apiFetch('/api/privacy/compliance/check', {
+          method: 'POST',
+          body: JSON.stringify({ standards: privacyForm.standards }),
+        });
+        complianceReport.value = await resp.json();
+        ElementPlus.ElMessage.success('合规检查完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('合规检查失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 DevSecOps ──
+    const devopsStats = reactive({ total_mappings: 0, open_tickets: 0, resolved_tickets: 0, in_progress_tickets: 0 });
+    const gateConfig = ref(null);
+
+    async function refreshDevopsStats() {
+      try {
+        const resp = await apiFetch('/api/devops/stats');
+        const data = await resp.json();
+        Object.assign(devopsStats, data);
+      } catch (e) {
+        console.warn('DevOps统计加载失败:', e);
+      }
+      try {
+        const resp = await apiFetch('/api/settings/security');
+        const data = await resp.json();
+        gateConfig.value = data.config;
+      } catch (e) {
+        gateConfig.value = { max_critical: 0, max_high: 0, max_medium: 10 };
+      }
+    }
+
+    // ── v3.1 设置 ──
+    const settingsSection = ref('system');
+    const settingsConfig = ref(null);
+
+    async function refreshSettings() {
+      try {
+        const resp = await apiFetch('/api/settings/' + settingsSection.value);
+        const data = await resp.json();
+        settingsConfig.value = data.config;
+      } catch (e) {
+        console.warn('配置加载失败:', e);
+      }
+    }
+
+    function selectSettingsSection(section) {
+      settingsSection.value = section;
+      refreshSettings();
+    }
 
     async function loadFpStats() {
       try {
@@ -811,6 +1035,43 @@ const app = createApp({
       loadFpStats,
       triggerFpOptimize,
       buildFpProfile,
+
+      // AI Pentest v3.1
+      aiStats,
+      aiForm,
+      aiLoading,
+      aiChainReport,
+      aiVerifyResult,
+      aiPocResult,
+      generateAttackChain,
+      generatePoc,
+      runAutoVerify,
+      generateFixPR,
+
+      // Industry Benchmark v3.1
+      industryList,
+      industryForm,
+      industryReport,
+      loadIndustryList,
+      runIndustryAnalysis,
+
+      // Privacy v3.1
+      privacyForm,
+      federateResult,
+      complianceReport,
+      initFederate,
+      runComplianceCheck,
+
+      // DevOps v3.1
+      devopsStats,
+      gateConfig,
+      refreshDevopsStats,
+
+      // Settings v3.1
+      settingsSection,
+      settingsConfig,
+      refreshSettings,
+      selectSettingsSection,
 
       // 工具
       severityTagType,

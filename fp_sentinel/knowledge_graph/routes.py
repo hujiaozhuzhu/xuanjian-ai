@@ -157,7 +157,7 @@ async def kg_search(
     until: Optional[str] = None,
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
-    scope: str = Query("snapshots", regex="^(snapshots|records)$"),
+    scope: str = Query("snapshots", pattern="^(snapshots|records)$"),
     db_path: Optional[str] = None,
 ):
     """按项目 / 版本 / 漏洞类型 / 时间范围检索历史记录。"""

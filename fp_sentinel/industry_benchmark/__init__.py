@@ -105,5 +105,5 @@ __all__ = [
     "create_default_policy",
 ]
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 __red_lines__ = ["S1", "S2", "S3", "S5", "S6", "S7"]

@@ -427,6 +427,62 @@ body {
 
 /* ─────── 响应式 ─────── */
 
+@media (max-width: 768px) {
+  .stats-row .el-col { margin-bottom: 12px; }
+  .findings-toolbar { flex-direction: column; }
+  .toolbar-actions { flex-wrap: wrap; }
+}
+
+/* ─────── v3.1 新页面通用样式 ─────── */
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ai-report-section {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.ai-report-json {
+  font-family: 'Courier New', Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--accent-cyan);
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.roadmap-item {
+  padding: 10px 16px;
+  margin-bottom: 6px;
+  background: var(--bg-tertiary);
+  border-left: 3px solid var(--accent-green);
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.settings-content {
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+.page-ai-pentest,
+.page-industry,
+.page-privacy,
+.page-devops,
+.page-settings {
+  animation: fadeIn 0.2s ease;
+}
+
 /* ─────── FP Optimize v3.0 误报统计页面 ─────── */
 
 .page-fp-stats {

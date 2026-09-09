@@ -310,6 +310,10 @@ class AutoPRService:
 
     # ─────────────────── 修复历史 ───────────────────
 
+    async def get_fix_record(self, record_id: str) -> Optional[FixRecord]:
+        """获取单条修复记录（按finding_id查找）"""
+        return self._fix_records.get(record_id)
+
     async def get_fix_history(
         self,
         finding_id: Optional[str] = None,

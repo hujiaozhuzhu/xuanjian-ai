@@ -12,6 +12,8 @@
 - S7: 操作仅本地，不外发
 """
 
+__version__ = "3.1.0"
+
 from .models import (
     PERM_SCHEMA_SQL,
     ROLE_PERMISSIONS,

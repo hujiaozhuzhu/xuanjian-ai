@@ -28,7 +28,7 @@ from .models import (
     get_theme_text_color,
 )
 
-__version__ = "2.5.1"
+__version__ = "3.1.0"
 
 __all__ = [
     # 生成器

@@ -29,3 +29,6 @@ artifacts-*.xml
 
 # 临时目录（转移靶场文件用）
 target-lab-temp/
+
+# 测试产物
+reports_static_*/

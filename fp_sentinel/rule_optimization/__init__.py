@@ -9,7 +9,7 @@
 版本: 2.5.1
 """
 
-__version__ = "2.5.1"
+__version__ = "3.1.0"
 
 from .auto_tuner import AutoTuner, TuningResult
 from .custom_rule_loader import CustomRuleLoader, CustomRule
