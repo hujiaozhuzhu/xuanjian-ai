@@ -29,6 +29,12 @@
           <el-menu-item index="dashboard">仪表板</el-menu-item>
           <el-menu-item index="scan">扫描</el-menu-item>
           <el-menu-item index="findings">发现列表</el-menu-item>
+          <el-menu-item index="fp-stats">误报统计</el-menu-item>
+          <el-menu-item index="ai-pentest">AI渗透</el-menu-item>
+          <el-menu-item index="industry">行业基准</el-menu-item>
+          <el-menu-item index="privacy">隐私协同</el-menu-item>
+          <el-menu-item index="devops">DevSecOps</el-menu-item>
+          <el-menu-item index="settings">设置</el-menu-item>
         </el-menu>
         <div class="header-right">
           <span class="ws-dot" :class="wsConnected ? 'connected' : 'disconnected'"></span>
@@ -265,6 +271,348 @@
               共 {{ findingsList.length }} 条结果
             </div>
           </div>
+        </div>
+
+        <!-- ═══ AI渗透测试页面 (v3.1) ═══ -->
+        <div v-if="currentPage === 'ai-pentest'" class="page-ai-pentest">
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#f85149">
+                <div class="stat-value" style="color:#f85149">{{ aiStats.attackChains }}</div>
+                <div class="stat-label">攻击链</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#d29922">
+                <div class="stat-value" style="color:#d29922">{{ aiStats.pocCount }}</div>
+                <div class="stat-label">PoC脚本</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#3fb950">
+                <div class="stat-value" style="color:#3fb950">{{ aiStats.verifiedCount }}</div>
+                <div class="stat-label">已验证</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#bc8cff">
+                <div class="stat-value" style="color:#bc8cff">{{ aiStats.fixCount }}</div>
+                <div class="stat-label">修复PR</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F916; AI攻击链生成</h3>
+                <el-form label-position="top">
+                  <el-form-item label="当前扫描ID">
+                    <el-input v-model="aiForm.scanId" placeholder="输入扫描ID" />
+                  </el-form-item>
+                  <el-form-item label="目标范围">
+                    <el-input v-model="aiForm.target" placeholder="默认 127.0.0.1" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" :loading="aiLoading.chain" @click="generateAttackChain">生成攻击链</el-button>
+                    <el-button :loading="aiLoading.poc" @click="generatePoc">生成PoC</el-button>
+                  </el-form-item>
+                </el-form>
+                <div v-if="aiChainReport" class="ai-report-section">
+                  <h4>推理报告</h4>
+                  <pre class="ai-report-json">{{ JSON.stringify(aiChainReport, null, 2) }}</pre>
+                </div>
+              </div>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F6E1; 自动验证</h3>
+                <el-button type="success" :loading="aiLoading.verify" @click="runAutoVerify">运行自动验证</el-button>
+                <el-button :disabled="!currentScanId" @click="generateFixPR">生成修复PR</el-button>
+                <div v-if="aiVerifyResult" class="ai-report-section">
+                  <h4>验证结果</h4>
+                  <pre class="ai-report-json">{{ JSON.stringify(aiVerifyResult, null, 2) }}</pre>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ 行业基准对标页面 (v3.1) ═══ -->
+        <div v-if="currentPage === 'industry'" class="page-industry">
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="8">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F4CA; 企业安全指标</h3>
+                <el-form label-position="top">
+                  <el-form-item label="行业">
+                    <el-select v-model="industryForm.industry" placeholder="选择行业">
+                      <el-option v-for="(name, key) in industryList" :key="key" :label="name" :value="key" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item label="总发现数">
+                    <el-input-number v-model="industryForm.totalFindings" :min="0" />
+                  </el-form-item>
+                  <el-form-item label="扫描次数">
+                    <el-input-number v-model="industryForm.scanCount" :min="1" />
+                  </el-form-item>
+                  <el-form-item label="平均修复天数">
+                    <el-input-number v-model="industryForm.avgRepairDays" :min="0" :step="0.5" />
+                  </el-form-item>
+                  <el-form-item label="合规评分(0-100)">
+                    <el-input-number v-model="industryForm.complianceScore" :min="0" :max="100" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" @click="runIndustryAnalysis">运行对标分析</el-button>
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="16">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F4C8; 差距分析报告</h3>
+                <div v-if="!industryReport" class="empty-hint">选择行业并点击运行对标分析</div>
+                <div v-else>
+                  <el-descriptions :column="2" border size="small">
+                    <el-descriptions-item label="综合评分">{{ industryReport.overall_score }}</el-descriptions-item>
+                    <el-descriptions-item label="整体评级">
+                      <el-tag :type="severityTagType(industryReport.overall_severity)">{{ industryReport.overall_severity }}</el-tag>
+                    </el-descriptions-item>
+                  </el-descriptions>
+                  <h4 style="margin-top:16px">分类差距</h4>
+                  <el-table :data="industryReport.category_gaps" size="small" max-height="300">
+                    <el-table-column prop="category_name" label="类别" />
+                    <el-table-column prop="score" label="评分" width="80" />
+                    <el-table-column label="严重度" width="100">
+                      <template #default="{row}">
+                        <el-tag :type="severityTagType(row.overall_severity)" size="small">{{ row.overall_severity }}</el-tag>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <h4 style="margin-top:16px">改进路线图</h4>
+                  <div v-for="(item, idx) in industryReport.improvement_roadmap" :key="idx" class="roadmap-item">{{ item }}</div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ 隐私协同审计页面 (v3.1) ═══ -->
+        <div v-if="currentPage === 'privacy'" class="page-privacy">
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F512; 联邦训练</h3>
+                <el-form label-position="top">
+                  <el-form-item label="训练轮次">
+                    <el-input-number v-model="privacyForm.rounds" :min="1" :max="100" />
+                  </el-form-item>
+                  <el-form-item label="最小参与节点">
+                    <el-input-number v-model="privacyForm.minParticipants" :min="2" />
+                  </el-form-item>
+                  <el-form-item>
+                    <el-button type="primary" @click="initFederate">初始化训练</el-button>
+                  </el-form-item>
+                </el-form>
+                <div v-if="federateResult" class="ai-report-section">
+                  <pre class="ai-report-json">{{ JSON.stringify(federateResult, null, 2) }}</pre>
+                </div>
+              </div>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">&#x2696; 合规检查</h3>
+                <el-checkbox-group v-model="privacyForm.standards">
+                  <el-checkbox value="data_security_law">数据安全法</el-checkbox>
+                  <el-checkbox value="pipl">个人信息保护法</el-checkbox>
+                  <el-checkbox value="iso_27001">ISO 27001</el-checkbox>
+                  <el-checkbox value="djcp_2_0">等保2.0</el-checkbox>
+                </el-checkbox-group>
+                <el-button type="success" @click="runComplianceCheck" style="margin-top:12px">运行合规检查</el-button>
+                <div v-if="complianceReport" class="ai-report-section">
+                  <pre class="ai-report-json">{{ JSON.stringify(complianceReport, null, 2) }}</pre>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ DevSecOps看板 (v3.1) ═══ -->
+        <div v-if="currentPage === 'devops'" class="page-devops">
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#58a6ff">
+                <div class="stat-value" style="color:#58a6ff">{{ devopsStats.total_mappings || 0 }}</div>
+                <div class="stat-label">漏洞映射</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#3fb950">
+                <div class="stat-value" style="color:#3fb950">{{ devopsStats.open_tickets || 0 }}</div>
+                <div class="stat-label">待处理工单</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#d29922">
+                <div class="stat-value" style="color:#d29922">{{ devopsStats.in_progress_tickets || 0 }}</div>
+                <div class="stat-label">处理中</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#bc8cff">
+                <div class="stat-value" style="color:#bc8cff">{{ devopsStats.resolved_tickets || 0 }}</div>
+                <div class="stat-label">已解决</div>
+              </div>
+            </el-col>
+          </el-row>
+          <el-row :gutter="16" style="margin-top:16px">
+            <el-col :span="24">
+              <div class="panel">
+                <h3 class="panel-title">Pipeline卡点评估</h3>
+                <el-descriptions :column="3" border size="small" v-if="gateConfig">
+                  <el-descriptions-item label="严重上限">{{ gateConfig.max_critical }}</el-descriptions-item>
+                  <el-descriptions-item label="高危上限">{{ gateConfig.max_high }}</el-descriptions-item>
+                  <el-descriptions-item label="中危上限">{{ gateConfig.max_medium }}</el-descriptions-item>
+                </el-descriptions>
+                <el-button type="primary" @click="refreshDevopsStats" style="margin-top:12px">刷新数据</el-button>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ 设置页面 (v3.1) ═══ -->
+        <div v-if="currentPage === 'settings'" class="page-settings">
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="8">
+              <div class="panel">
+                <h3 class="panel-title">&#x2699; 配置导航</h3>
+                <el-menu :default-active="settingsSection" @select="selectSettingsSection" mode="vertical" style="border:none">
+                  <el-menu-item index="system">系统</el-menu-item>
+                  <el-menu-item index="scan">扫描器</el-menu-item>
+                  <el-menu-item index="security">安全</el-menu-item>
+                  <el-menu-item index="auto_pr">自动修复</el-menu-item>
+                  <el-menu-item index="devops">DevOps集成</el-menu-item>
+                </el-menu>
+              </div>
+            </el-col>
+            <el-col :xs="24" :sm="16">
+              <div class="panel">
+                <h3 class="panel-title">&#x1F4CB; {{ settingsSection || 'system' }} 配置</h3>
+                <div v-if="settingsConfig" class="settings-content">
+                  <el-descriptions :column="1" border size="small">
+                    <el-descriptions-item v-for="(val, key) in settingsConfig" :key="key" :label="key">
+                      <code>{{ typeof val === 'object' ? JSON.stringify(val) : val }}</code>
+                    </el-descriptions-item>
+                  </el-descriptions>
+                </div>
+                <el-button @click="refreshSettings" style="margin-top:12px">刷新配置</el-button>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- ═══ 误报统计页面 (v3.0 自适应引擎) ═══ -->
+        <div v-if="currentPage === 'fp-stats'" class="page-fp-stats">
+          <!-- 统计概览卡片 -->
+          <el-row :gutter="16" class="stats-row">
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#58a6ff">
+                <div class="stat-value" style="color:#58a6ff">{{ fpStats.total_feedbacks }}</div>
+                <div class="stat-label">总反馈数</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#f85149">
+                <div class="stat-value" style="color:#f85149">{{ (fpStats.fp_rate * 100).toFixed(2) }}%</div>
+                <div class="stat-label">当前误报率</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#3fb950">
+                <div class="stat-value" style="color:#3fb950">{{ (fpStats.target_fp_rate * 100).toFixed(0) }}%</div>
+                <div class="stat-label">目标误报率</div>
+              </div>
+            </el-col>
+            <el-col :xs="12" :sm="6">
+              <div class="stat-card" style="borderTopColor:#d29922">
+                <div class="stat-value" style="color:#d29922">{{ fpStats.optimization_count }}</div>
+                <div class="stat-label">优化次数</div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 误报率趋势图 -->
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="16">
+              <div class="panel">
+                <h3 class="panel-title">📉 误报率趋势 (30天)</h3>
+                <div class="chart-container">
+                  <canvas id="fp-trend-chart" width="600" height="250"></canvas>
+                </div>
+                <div style="text-align:center;margin-top:8px">
+                  <el-tag :type="fpStats.fp_rate_trend === 'decreasing' ? 'success' : fpStats.fp_rate_trend === 'increasing' ? 'danger' : 'info'">
+                    趋势: {{ fpStats.fp_rate_trend === 'decreasing' ? '下降中' : fpStats.fp_rate_trend === 'increasing' ? '上升中' : '稳定' }}
+                  </el-tag>
+                </div>
+              </div>
+            </el-col>
+
+            <!-- 优化建议 -->
+            <el-col :xs="24" :sm="8">
+              <div class="panel">
+                <h3 class="panel-title">💡 优化建议</h3>
+                <div v-if="fpRecommendations.length === 0" class="empty-hint">暂无建议，继续积累反馈数据</div>
+                <div v-for="(rec, idx) in fpRecommendations" :key="idx" class="recommendation-card">
+                  <el-tag :type="rec.priority === 'high' ? 'danger' : rec.priority === 'medium' ? 'warning' : rec.priority === 'success' ? 'success' : 'info'" size="small">
+                    {{ rec.priority === 'high' ? '高' : rec.priority === 'medium' ? '中' : rec.priority === 'success' ? '达标' : '信息' }}
+                  </el-tag>
+                  <div class="rec-message">{{ rec.message }}</div>
+                  <div class="rec-action">→ {{ rec.action }}</div>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 高频误报规则 & 误报模式识别 -->
+          <el-row :gutter="16">
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">🔥 高频误报规则 TOP10</h3>
+                <el-table :data="fpTopRules" size="small" max-height="300">
+                  <el-table-column prop="rule_id" label="规则ID" min-width="160" />
+                  <el-table-column prop="total" label="总数" width="70" />
+                  <el-table-column prop="fp_count" label="误报数" width="70" />
+                  <el-table-column label="误报率" width="90">
+                    <template #default="{row}">{{ row.fp_pct }}%</template>
+                  </el-table-column>
+                </el-table>
+              </div>
+            </el-col>
+            <el-col :xs="24" :sm="12">
+              <div class="panel">
+                <h3 class="panel-title">🔍 系统性误报模式</h3>
+                <div v-if="fpPatterns.length === 0" class="empty-hint">暂无识别到的误报模式</div>
+                <div v-for="(p, idx) in fpPatterns" :key="idx" class="fp-pattern-card">
+                  <el-tag type="warning" size="small">{{ (p.fp_probability * 100).toFixed(0) }}%</el-tag>
+                  <span class="pattern-rule">{{ p.rule_id }}</span>
+                  <span class="pattern-desc">{{ p.description }}</span>
+                </div>
+              </div>
+            </el-col>
+          </el-row>
+
+          <!-- 操作按钮 -->
+          <el-row :gutter="16">
+            <el-col :span="24">
+              <div class="panel" style="padding:16px">
+                <el-button type="primary" :loading="fpOptimizing" @click="triggerFpOptimize">
+                  {{ fpOptimizing ? '优化中...' : '运行自动优化' }}
+                </el-button>
+                <el-button @click="buildFpProfile">构建代码风格画像</el-button>
+                <el-button @click="loadFpStats">刷新数据</el-button>
+              </div>
+            </el-col>
+          </el-row>
         </div>
 
         <!-- ═══ 详情页（抽屉） ═══ -->

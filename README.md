@@ -1,4 +1,3 @@
-
 ```
   ██╗  ██╗██╗   ██╗ █████╗ ███╗   ██╗     ██╗██╗ █████╗ ███╗  ██╗
   ╚██╗██╔╝██║   ██║██╔══██╗████╗  ██║     ██║██║██╔══██╗████╗ ██║
@@ -8,24 +7,11 @@
   ╚═╝  ╚═╝ ╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═══╝ ╚════╝ ╚═╝╚═╝  ╚═╝╚═╝  ╚══╝
 ```
 
-# 玄鉴 XuanJian AI v2.2.3
+# 玄鉴 XuanJian AI v3.1
 
-> **鉴伪存真，洞察代码风险** — 面向安全研究团队的开源代码审计与红蓝对抗平台
+> **鉴伪存真，洞察代码风险** — 面向安全研究团队的 AI 驱动代码安全审计与红蓝对抗平台
 
-> v2.2.3 修正生产压缩 bundle 的多处同规则命中：同一原始第 1 行中的不同静态字符偏移和格式化后位置会分别保留，不会被去重折叠。不会执行、解密、动态解包或修改被扫描文件。
-
-## Windows 用户注意
-
-Windows 安装后，不依赖 `Scripts` 目录是否已加入 PATH：
-
-```powershell
-python -m fp_sentinel --version
-python -m fp_sentinel scan C:\path\to\project --lang javascript
-```
-
-如需直接使用 `fp-sentinel` 命令，请将当前 Python 环境的 `Scripts` 目录加入 PATH。GBK/CP936 终端会自动使用 `[SCAN]`、`[OK]`、`[WARN]` 等 ASCII 状态标记，不会改动系统代码页。
-
-安装建议：基础安装适用于内置规则；高级 Semgrep 规则使用 `pip install -e ".[scanners]"`；生产压缩 JavaScript 预处理使用 `pip install -e ".[preprocess]"`；完整安装使用 `pip install -e ".[all]"`。
+> v3.1 融合 AI 自主渗透测试、自动化修复 PR、DevSecOps 流水线集成、行业基准对标、隐私计算协同审计五大新模块，全版本号统一。不会执行、解密、动态解包或修改被扫描文件。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
@@ -33,57 +19,74 @@ python -m fp_sentinel scan C:\path\to\project --lang javascript
 
 ---
 
-## ✨ v2.2.2 生产压缩代码支持
+## 目录
 
-- 对满足以下特征的 JavaScript/TypeScript 文件启用可选静态格式化：大于 10KB、换行不超过 4 行、平均行长超过 2000 字符。
-- 发现项保留原始文件行号，并附带 `格式化后行号` 和原始字符偏移提示；同规则的多个不同位置会分别保留；JSON 和 SARIF 也保留该元数据。
-- 检测到疑似 Base64/`atob`/`fromCharCode` 重度混淆时，只给出“建议扫描原始源码”的提示。工具不解密、不动态执行、不解析 source map。
-- 未安装 `jsbeautifier` 或格式化失败时，原文件仍会按原始文本扫描，CLI 会说明定位能力受限。
-
-## ✨ v2.2.0 新特性
-
-| 特性 | 说明 |
-|------|------|
-| 🎯 **攻击可验证** | 20 类本地 PoC 模板、可利用性评分、攻击链编排；目标限制为 localhost/127.0.0.1 |
-| 📄 **双报告体系** | 合规报告包含 Diff/CVE/ROI/趋势；攻防报告包含验证状态、攻击路径与修复优先级 |
-| 👤 **开发者画像** | 只读 git blame、SHA256 匿名别名、六维画像、团队健康度与本地 SQLite 存储 |
-| 🔒 **零危险边界** | 不修改源代码、不删除用户文件、不攻击外部目标、不向外部 API 写数据 |
-
-## ✨ v2.0 新特性
-
-| 特性 | 说明 |
-|------|------|
-| 🔴 **红蓝对抗** | 红队攻击用例生成 vs 蓝队自适应防御，自动收敛迭代 |
-| 🛡️ **四级降噪** | L1语法→L2语义→L3统计→L4智能(LLM)，误报率 < 8% |
-| 🌐 **多语言支持** | Java + JavaScript/TypeScript + Python，各20+条规则 |
-| 🤖 **JSRPC 浏览器引擎** | Playwright 集成，函数 Hook，密钥自动捕获 |
-| ⛓️ **攻击链发现** | 基于图论的漏洞关联分析，10种预置攻击链模板 |
-| 📊 **动态风险评分** | CVSS + EPSS + 资产价值 + 可达性多维评分 |
-| 🧪 **AIGC 安全治理** | Prompt Injection、幻觉依赖、LLM输出直接执行检测 |
-| ⚡ **性能基准** | 自动化性能测试，10万行 < 3分钟 |
+- [v3.1 新特性](#v31-新特性)
+- [快速开始](#快速开始)
+- [子命令列表](#子命令列表)
+- [Web 仪表板](#web-仪表板)
+- [安全红线](#安全红线)
+- [文档导航](#文档导航)
+- [架构概览](#架构概览)
+- [版本历史](#版本历史)
+- [License](#license)
 
 ---
 
-## 📈 效果展示
+## v3.1 新特性
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│  扫描器原始发现:     247 条                                   │
-│  ─────────────────────────────────                           │
-│  L1 语法降噪:        -89 条  (白名单注释+安全函数+测试文件)   │
-│  L2 语义降噪:        -52 条  (框架安全+MVC分层+安全装饰器)    │
-│  L3 统计降噪:        -31 条  (误报指纹+聚类去重)              │
-│  L4 智能降噪:        -12 条  (LLM边界判断)                   │
-│  ─────────────────────────────────                           │
-│  最终待复核:          63 条                                   │
-│  误报减少率:         74.5%                                    │
-│  检出率:             96.8%                                    │
-└─────────────────────────────────────────────────────────────┘
-```
+### AI 自主渗透测试 (Agent-AI-Pentest)
+
+| 能力 | 说明 |
+|------|------|
+| GNN 攻击链推理 | 4 头图注意力网络，节点角色分类（entry / intermediate / sink） |
+| 5 种可视化 | Mermaid / DOT / JSON / ASCII / D3.js 交互式 HTML |
+| PoC 自动生成 | 攻击链感知组合脚本，payload 黑名单防御 |
+| 漏洞自动验证 | 三态诚实标注：verified_local / simulated / manual_required |
+| 靶场编排 | Docker/Podman 自动检测，端口冲突管理，状态持久化 |
+
+### 自动化修复 (Auto PR)
+
+| 能力 | 说明 |
+|------|------|
+| 16 类漏洞模板 | 覆盖 OWASP Top 10，含 bad_patterns / good_example |
+| 三重校验 | 语法检查 + 原漏洞修复确认 + 新漏洞引入检测 |
+| PR 管理 | GitLab / GitHub 双适配器，自动关联漏洞单 |
+| dry_run 模式 | 全流程离线测试，不调用外部 API |
+
+### DevSecOps 集成
+
+| 能力 | 说明 |
+|------|------|
+| Pipeline 门禁 | 支持阻断/警告两种安全策略 |
+| 工单引擎 | 全生命周期自动化流转 |
+| 多平台适配 | GitLab / Jira / GitHub |
+| Webhook | 实时接收 CI/CD 事件 |
+
+### 行业基准对标
+
+| 能力 | 说明 |
+|------|------|
+| 11 个行业 | 互联网、银行、政务、工业控制、医疗、教育、运营商、能源、交通、保险、证券 |
+| 四维差距分析 | 漏洞密度、修复速度、合规评分、覆盖范围 |
+| 25+ 行业规则 | GB/T 22239、JR/T 0071 等国家/行业标准映射 |
+
+### 隐私计算协同审计
+
+| 能力 | 说明 |
+|------|------|
+| 联邦学习 | FedAvg + 差分隐私 + 梯度加密 |
+| 规则共享 | 四级敏感度 + 自动脱敏引擎 |
+| 合规验证 | 数据安全法、等保2.0、PIPL、ISO 27001 |
+| 协同任务 | 六态状态机 + 团队隔离视图 |
+
+### 粒子群反馈优化 (FP Optimize)
+
+基于历史误报反馈的自适应降噪优化，持续提升扫描准确率。
 
 ---
 
-## 🚀 快速开始
+## 快速开始
 
 ### 安装
 
@@ -97,397 +100,330 @@ source .venv/bin/activate
 # 基础安装
 pip install -e .
 
-# 完整安装（含浏览器引擎、扫描器、ML、Web）
+# 完整安装（含浏览器引擎、扫描器、ML、Web、AI 渗透测试）
 pip install -e ".[all]"
-
-# 安装 Playwright 浏览器（JSRPC 功能需要）
-playwright install chromium
 ```
 
-### CLI 使用
+### Windows 用户
+
+```powershell
+python -m fp_sentinel --version
+python -m fp_sentinel scan C:\path\to\project --lang javascript
+```
+
+GBK/CP936 终端自动使用 ASCII 状态标记，不会改动系统代码页。
+
+---
+
+## 子命令列表
+
+### 代码扫描
 
 ```bash
-# 扫描项目（自动检测语言）
+# 扫描项目
 fp-sentinel scan /path/to/project --format table
+fp-sentinel scan /path/to/project --lang {java,python,go,javascript,typescript,auto}
 
-# 指定语言扫描
-fp-sentinel scan /path/to/project --lang javascript
-fp-sentinel scan /path/to/project --lang python
-fp-sentinel scan /path/to/project --lang java
-
-# 列出发现
+# 列出发现 / 误报标记 / 统计
 fp-sentinel list --severity HIGH
-
-# 标记误报
-fp-sentinel mark <finding-id> --reason "使用PreparedStatement" --scope rule
-
-# 查看统计
+fp-sentinel mark <finding-id> --reason "..." --scope rule
 fp-sentinel stats
+```
 
-# 生成合规报告或攻防报告（报告仅写入 --output 目录）
+### 报告生成
+
+```bash
 fp-sentinel scan /path/to/project --report compliance --output ./reports
 fp-sentinel scan /path/to/project --report attack --output ./reports
 fp-sentinel scan /path/to/project --report all --output ./reports
+```
 
-# 开发者画像（默认只显示匿名别名）
+### 攻防测试
+
+```bash
+fp-sentinel attack chains /path/to/project           # 攻击链推理
+fp-sentinel attack poc <finding-id>                  # PoC 生成
+fp-sentinel attack verify /path/to/project           # 自动验证
+fp-sentinel attack lab start                         # 启动靶场
+fp-sentinel attack purge --days 30                   # 清理记录
+```
+
+### 自动化修复
+
+```bash
+fp-sentinel auto-pr fix <finding-id> --dry-run       # 生成修复建议
+fp-sentinel auto-pr submit <finding-id>              # 提交修复 PR
+fp-sentinel auto-pr list                             # 查看 PR 列表
+```
+
+### 企业权限管理
+
+```bash
+fp-sentinel perm user create <username> --role security_engineer
+fp-sentinel perm project grant <project> <user> --role developer
+fp-sentinel perm audit                               # 查看审计日志
+```
+
+### 企业任务管理
+
+```bash
+fp-sentinel task create <project_id> "修复SQL注入" --type vuln_fix --priority P0
+fp-sentinel task bulk-create <project_id> <fid1,fid2> --priority P1
+fp-sentinel task list --status assigned
+fp-sentinel task stats --project <project_id>
+```
+
+### 企业通知
+
+```bash
+fp-sentinel notify channel add feishu --url https://...
+fp-sentinel notify rule add --severity CRITICAL --frequency realtime
+fp-sentinel notify history
+```
+
+### 开发者画像
+
+```bash
 fp-sentinel profile me /path/to/project
 fp-sentinel profile team /path/to/project
 fp-sentinel profile forget /path/to/project --alias <alias>
+```
 
-# 清理超过 30 天的本地攻防 PoC 记录
-fp-sentinel attack purge --days 30
+### 知识图谱
 
-# 浏览器自动化（JSRPC）
+```bash
+fp-sentinel scan /path/to/project --kg --kg-version v1.2.0
+fp-sentinel kg match --rule-id "java.sql.injection"
+fp-sentinel kg search --project my-app --type sql_injection
+fp-sentinel kg stats
+```
+
+### 可视化
+
+```bash
+fp-sentinel viz heatmap /path/to/project --output reports/heatmap.html
+fp-sentinel viz trend /path/to/project --output reports/trend.png
+```
+
+### 行业对标
+
+```bash
+fp-sentinel industry analyze /path/to/project --target finance
+fp-sentinel industry compare --baseline internet
+fp-sentinel industry rules --industry healthcare
+```
+
+### 隐私计算
+
+```bash
+fp-sentinel privacy train --rounds 10 --participants 5 --epsilon 1.0
+fp-sentinel privacy rule create "SQL Detector" sql_injection --pattern "..."
+fp-sentinel privacy validate --standards dsl,djcp
+fp-sentinel privacy collab demo --teams 3
+```
+
+### DevSecOps
+
+```bash
+fp-sentinel devops pipeline check /path/to/project --gate block
+fp-sentinel devops ticket list --status open
+fp-sentinel devops webhook receive --event push
+```
+
+### MCP Server
+
+```bash
+fp-sentinel mcp --transport stdio     # AI 客户端集成
+fp-sentinel mcp --transport sse --port 8000
+```
+
+### 浏览器自动化 (JSRPC)
+
+```bash
 fp-sentinel browser start --url "https://target.com/login"
 fp-sentinel browser hook --target "encrypt" --type trace
 fp-sentinel browser call --func "encryptPassword" --args '["test"]'
 fp-sentinel browser keys
 ```
 
-### MCP Server
+---
+
+## Web 仪表板
+
+启动 Web 服务后访问 `http://localhost:8080`。
 
 ```bash
-# stdio 模式（推荐用于 AI 客户端集成）
-fp-sentinel mcp --transport stdio
+fp-sentinel web serve --port 8080
+```
 
-# SSE 模式
-fp-sentinel mcp --transport sse --port 8000
+### 页面说明
+
+| 路径 | 功能 |
+|------|------|
+| `/` | 安全审计仪表板首页 |
+| `/api/projects` | 项目列表 API |
+| `/api/scan` | 启动扫描 API |
+| `/api/findings` | 发现列表 API |
+| `/api/stats` | 统计信息 API |
+| `/docs` | Swagger 交互式 API 文档 |
+| `/redoc` | ReDoc API 文档 |
+
+### REST API
+
+完整 API 参考见 [docs/api-reference.md](docs/api-reference.md)。
+
+---
+
+## 安全红线
+
+| 红线 | 实现 |
+|------|------|
+| **S1 零网络** | 核心引擎纯本地计算，攻击 PoC 仅 localhost/127.0.0.1/::1 |
+| **S2 不修改代码** | 工具只读被扫描文件，修复建议仅生成 diff/PR |
+| **S3 不删除文件** | 仅操作本地 SQLite 数据 |
+| **S4 无真实攻击** | Docker 验证必须显式开启，默认 simulated |
+| **S5 保留策略** | PoC/通知记录支持按保留期自动清理 |
+| **S6 隐私保护** | 开发者 email 不落盘，SHA256 匿名别名 |
+| **S7 路径白名单** | 数据库/报告路径固定于 `~/.xuanjian/` |
+| **S8 加密传输** | 联邦学习梯度强制加密 |
+| **S9 规则脱敏** | 共享规则自动多层清洗 |
+
+---
+
+## 文档导航
+
+| 文档 | 内容 |
+|------|------|
+| [docs/architecture.md](docs/architecture.md) | 系统架构详解（分层设计、数据流、扫描器适配器） |
+| [docs/api-reference.md](docs/api-reference.md) | REST API 参考（13 个端点 + WebSocket） |
+| [docs/deployment.md](docs/deployment.md) | 部署指南（裸机 / Docker / 外部依赖） |
+| [docs/java-rules.md](docs/java-rules.md) | Java 误报规则库文档 |
+| [docs/mcp-integration.md](docs/mcp-integration.md) | MCP 集成方式 |
+| [docs/claude-config.md](docs/claude-config.md) | Claude API 配置指南 |
+| [docs/web-dashboard.md](docs/web-dashboard.md) | Web 仪表板功能说明 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南 |
+| [CHANGELOG.md](CHANGELOG.md) | 版本变更日志 |
+
+### 知识图谱归档
+
+| 模块目录 | 覆盖子模块 |
+|---------|-----------|
+| `knowledge_graph/modules/attack/` | A1~A7: PoC/利用性/靶场/报告/合规/CLI |
+| `knowledge_graph/modules/v3_ai_pentest/` | A1~A4: GNN/PoC生成/验证/靶场 |
+| `knowledge_graph/modules/v3_auto_pr/` | A1~C3: 修复生成/校验/PR管理 |
+| `knowledge_graph/modules/v3_devops/` | A1~H8: 模型/适配器/门禁/工单/Webhook |
+| `knowledge_graph/modules/v3_industry/` | A1~F6: 数据/对比/规则/修复/API/测试 |
+| `knowledge_graph/modules/v3_industry_full/` | 增强版行业对标（含修复顾问） |
+| `knowledge_graph/modules/v3_privacy/` | A1~A4: 联邦/共享/验证/协同 |
+| `knowledge_graph/modules/enterprise_notify/` | N1~N6: 通知模型/引擎/Webhook |
+| `knowledge_graph/modules/enterprise_perm/` | E1~E5: 权限模型/仓库/检查/审计 |
+| `knowledge_graph/modules/enterprise_task/` | A~D: 分配/跟踪/评审/统计 |
+| `knowledge_graph/modules/profile/` | P1~P6: 画像模型/归因/算法/报告/隐私/CLI |
+| `knowledge_graph/modules/knowledge_integration/` | A1~A2: 查询插件/自动归档 |
+| `knowledge_graph/modules/knowledge_visual/` | A~B: 热力图/趋势图 |
+| `knowledge_graph/modules/multi_language/` | A~C: Go规则/JS增强/扫描器管理 |
+| `knowledge_graph/modules/rule_optimization/` | A1~A3: 自动调优/自定义规则/Java优化 |
+
+---
+
+## 架构概览
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                          接入层                                       │
+│  ┌──────────────┐  ┌───────────────┐  ┌────────────────────────────┐ │
+│  │  MCP Server  │  │  Web Server   │  │      CLI (Typer)           │ │
+│  │  (FastMCP)   │  │  (FastAPI)    │  │ scan/attack/auto-pr/devops │ │
+│  └──────┬───────┘  └──────┬────────┘  └────────────┬───────────────┘ │
+└─────────┼─────────────────┼─────────────────────────┼───────────────┘
+          │                 │                         │
+┌─────────▼─────────────────▼─────────────────────────▼───────────────┐
+│                         核心服务层                                    │
+│  ┌────────────────────────────────────────────────────────────────┐  │
+│  │                    FPServer 核心服务                            │  │
+│  │   扫描调度 │ 降噪流水线 │ GNN推理 │ Auto-PR │ Pipeline门禁     │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────────┐
+│                          引擎层                                      │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐  │
+│  │ GNN Attack│ │ Auto Fix │ │ Privacy  │ │ Industry │ │  规则   │  │
+│  │ Reasoner │ │ Generator│ │ Engine   │ │ Benchmark│ │ 优化器  │  │
+│  └──────────┘ └──────────┘ └──────────┘ └──────────┘ └─────────┘  │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    四级降噪流水线                              │   │
+│  │          L1 语法 → L2 语义 → L3 统计 → L4 LLM 智能           │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                     扫描器适配层                               │   │
+│  │   Semgrep │ FindSecBugs │ Bandit │ Go Scanner │ JS Scanner   │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────┬───────────────────────────────────────┘
+                              │
+┌─────────────────────────────▼───────────────────────────────────────┐
+│                          数据层                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  SQLite (WAL) │ 知识图谱 │ 行业基准 │ 联邦学习 │ 配置管理    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 🔧 MCP 工具列表 (16个)
+## 多语言规则覆盖
 
-### 代码审计工具
-
-| # | 工具名 | 说明 |
-|---|--------|------|
-| 1 | `scan_project` | 扫描项目，自动检测语言并调度扫描器 |
-| 2 | `triage_findings` | 对扫描结果进行分诊，应用过滤器识别误报 |
-| 3 | `explain_finding` | 解释单条发现，提供详细分析和处理建议 |
-| 4 | `mark_false_positive` | 将发现标记为误报，写入历史基线 |
-| 5 | `list_findings` | 列出扫描发现，支持按 verdict、severity 过滤 |
-| 6 | `export_report` | 导出扫描报告（JSON/Markdown） |
-| 7 | `get_statistics` | 获取项目统计信息 |
-| 8 | `list_projects` | 列出已扫描的项目 |
-
-### JSRPC 浏览器工具
-
-| # | 工具名 | 说明 |
-|---|--------|------|
-| 9 | `jspy_start` | 启动浏览器实例 |
-| 10 | `jspy_navigate` | 导航到目标 URL |
-| 11 | `jspy_hook` | 注入函数 Hook（trace/before/after/replace） |
-| 12 | `jspy_call` | 远程调用页面函数 |
-| 13 | `jspy_evaluate` | 执行 JavaScript 表达式 |
-| 14 | `jspy_trace` | 追踪函数调用链，捕获输入输出 |
-| 15 | `jspy_extract_keys` | 自动提取加密密钥 |
-| 16 | `jspy_stop` | 关闭浏览器实例 |
-
----
-
-## 🏗️ 架构图
-
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                        玄鉴 v2.0 架构                                    │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │                    MCP Server (16 工具)                          │   │
-│  │  ┌──────────┬──────────┬──────────┬──────────┐                 │   │
-│  │  │scan_     │triage_   │jspy_     │jspy_     │ ...             │   │
-│  │  │project   │findings  │start     │hook      │                 │   │
-│  │  └────┬─────┴────┬─────┴────┬─────┴────┬─────┘                 │   │
-│  └───────┼──────────┼──────────┼──────────┼────────────────────────┘   │
-│          │          │          │          │                             │
-│  ┌───────▼──────────▼──────────▼──────────▼────────────────────────┐   │
-│  │                      核心服务层                                   │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌─────────────────────┐   │   │
-│  │  │ 扫描器管理    │  │ 降噪流水线   │  │  JSRPC 引擎         │   │   │
-│  │  │ ScannerMgr   │  │ L1→L2→L3→L4 │  │  BrowserEngine      │   │   │
-│  │  └──────┬───────┘  └──────┬───────┘  └──────────┬──────────┘   │   │
-│  └─────────┼─────────────────┼──────────────────────┼──────────────┘   │
-│            │                 │                      │                   │
-│  ┌─────────▼─────────────────▼──────────────────────▼──────────────┐   │
-│  │                       扫描器层                                    │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────┐  │   │
-│  │  │ Semgrep  │ │  Bandit  │ │FindSec   │ │ JS Scanner       │  │   │
-│  │  │ Scanner  │ │ Scanner  │ │ Bugs     │ │ (50+规则)        │  │   │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────────────┘  │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌────────────────────────────────────────────────────────────────┐   │
-│  │                       过滤器层                                   │   │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │   │
-│  │  │ L1 语法  │→│ L2 语义  │→│ L3 统计  │→│ L4 智能(LLM) │  │   │
-│  │  │ 降噪     │  │ 降噪     │  │ 降噪     │  │ 降噪         │  │   │
-│  │  └──────────┘  └──────────┘  └──────────┘  └──────────────┘  │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌────────────────────────────────────────────────────────────────┐   │
-│  │                    红蓝对抗引擎                                  │   │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌────────────────────┐  │   │
-│  │  │ 红队生成器    │  │ 对抗循环     │  │ 攻击链发现         │  │   │
-│  │  │ 10种变异策略  │  │ 自动收敛     │  │ 10种预置链         │  │   │
-│  │  └──────────────┘  └──────────────┘  └────────────────────┘  │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-│                                                                         │
-│  ┌────────────────────────────────────────────────────────────────┐   │
-│  │  SQLite (WAL) │ 规则库 │ 基线指纹库 │ 对抗历史 │ 配置管理     │   │
-│  └────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────┘
-```
-
----
-
-## 🔐 v2.2.0 安全与隐私边界
-
-- PoC 生成器只接受 `localhost`、`127.0.0.1` 和 `::1`，外部目标会被拒绝。
-- 默认验证模式为源码特征模拟，不发起网络请求；Docker 验证必须显式开启且失败时降级为 `simulated`。
-- git 归因仅允许 `log`、`blame`、`show`，不执行 commit、push、tag、config 等写操作。
-- 开发者 email 不落盘，画像使用确定性 SHA256 别名；原始姓名仅在内存态或本地加密字段中处理。
-- `--reveal` 必须同时满足环境变量和安全负责人确认参数；画像仅用于培训与能力提升，不用于绩效考核。
-- 报告路径经过白名单校验，PoC 记录支持按保留期清理；不会修改被扫描源代码。
-
-## 🛡️ 四级降噪引擎
-
-| 层级 | 名称 | 功能 | 性能 |
-|------|------|------|------|
-| L1 | 语法降噪 | 白名单注释、安全函数、常量表达式、测试文件 | < 5ms/file |
-| L2 | 语义降噪 | 框架安全特性、MVC分层、安全装饰器 | < 50ms/file |
-| L3 | 统计降噪 | 误报指纹、置信度评分、聚类去重 | < 100ms/100条 |
-| L4 | 智能降噪 | LLM边界判断（仅边界案例触发） | < 10次调用/扫描 |
-
-```python
-from fp_sentinel.filters import NoisePipeline
-
-pipeline = NoisePipeline(
-    enable_l1=True,
-    enable_l2=True,
-    enable_l3=True,
-    enable_l4=True,  # 需要 LLM 客户端
-    llm_client=your_llm,
-)
-
-filtered_findings = await pipeline.process(findings)
-print(f"降噪统计: {pipeline.get_stats()}")
-```
-
----
-
-## 🔴 红蓝对抗
-
-### 红队攻击用例生成
-
-```python
-from fp_sentinel.redteam import RedTeamGenerator
-
-generator = RedTeamGenerator(llm_client=your_llm)
-result = await generator.generate_bypasses(
-    rule_id="js.injection.eval",
-    description="eval() 执行任意代码",
-    pattern=r"\beval\s*\(",
-    count=20,
-)
-
-# 10种变异策略
-# L1: API替换 (eval→Function/setTimeout)
-# L2: 编码绕过 (Unicode/Hex/Base64)
-# L3: 控制流混淆 (try-catch/IIFE)
-# L4: 原型链利用 (constructor chain)
-```
-
-### 对抗循环
-
-```python
-from fp_sentinel.redteam import AdversarialLoop
-
-loop = AdversarialLoop()
-result = await loop.run(
-    rule_id="js.injection.eval",
-    count_per_round=20,
-)
-
-# 收敛条件: 检出率≥96%, 误报率≤8%, L3绕过率≤3%
-# 连续3轮稳定, 方差<1.5%, 最大15轮
-```
-
----
-
-## ⛓️ 攻击链发现
-
-```python
-from fp_sentinel.analysis import AttackChainDiscovery
-
-discovery = AttackChainDiscovery()
-chains = discovery.discover_chains(findings)
-
-for chain in chains[:5]:
-    print(f"{chain.name} (评分: {chain.overall_score:.2f})")
-    for step in chain.steps:
-        print(f"  Step {step.step_number}: {step.action}")
-```
-
-### 10种预置攻击链
-
-| ID | 名称 | 步骤 |
-|----|------|------|
-| CHAIN-001 | JWT弱密钥→管理员伪造→数据导出 | 3 |
-| CHAIN-002 | SQL注入→认证绕过→数据泄露 | 3 |
-| CHAIN-003 | XSS→会话劫持→账户接管 | 3 |
-| CHAIN-004 | 反序列化→RCE→横向移动 | 3 |
-| CHAIN-005 | SSRF→元数据读取→密钥泄露 | 3 |
-| CHAIN-006 | 文件上传→WebShell→权限提升 | 3 |
-| CHAIN-007 | 路径遍历→配置泄露→内网渗透 | 3 |
-| CHAIN-008 | 逻辑缺陷→批量操作→数据篡改 | 3 |
-| CHAIN-009 | 第三方库→供应链攻击→后门 | 3 |
-| CHAIN-010 | AI幻觉→依赖投毒→构建劫持 | 3 |
-
----
-
-## 🌐 多语言规则覆盖
-
-### JavaScript/TypeScript (50+ 条规则)
+### JavaScript/TypeScript (78 条规则)
 
 | 类别 | 规则数 | 覆盖 |
 |------|--------|------|
-| XSS | 8 | innerHTML, outerHTML, document.write, jQuery.html, dangerouslySetInnerHTML, v-html |
+| XSS | 8 | innerHTML, outerHTML, document.write, jQuery.html 等 |
 | 注入 | 4 | eval, Function, setTimeout(string), 动态脚本加载 |
 | 原型污染 | 3 | Object.assign, 深合并, 动态属性访问 |
-| 加密 | 5 | Math.random, MD5, SHA1, DES, ECB模式 |
-| 敏感信息 | 4 | 硬编码密码/API Key/Token/私钥 |
-| AIGC | 15 | Prompt Injection, LLM输出执行, 幻觉依赖, API Key泄露 |
+| 加密 | 5 | Math.random, MD5, SHA1, DES, ECB 模式 |
+| AIGC | 15 | Prompt Injection, LLM 输出执行, 幻觉依赖 |
 
-### Python (20 条规则)
+### Go (29 条规则，v2.3.0 新增)
 
-| 类别 | 规则数 | 覆盖 |
-|------|--------|------|
-| SQL注入 | 2 | 字符串拼接, .format() |
-| 命令注入 | 3 | os.system, subprocess, eval/exec |
-| 反序列化 | 3 | pickle, yaml.load, marshal |
-| 加密 | 3 | MD5/SHA1, 硬编码密钥, DES/RC4 |
-| 认证 | 3 | DEBUG模式, CSRF, JWT弱密钥 |
-| 其他 | 6 | SSRF, 路径穿越, XXE, 敏感信息 |
+覆盖 SQL 注入、命令注入、路径遍历、不安全的反序列化、SSRF、硬编码凭据等。
 
 ### Java (70+ 条规则)
 
-详见 [Java 误报规则文档](docs/java-rules.md)。
+详见 [docs/java-rules.md](docs/java-rules.md)。
+
+### Python (20 条规则)
+
+覆盖 SQL 注入、命令注入、反序列化、弱加密、认证缺陷等。
 
 ---
 
-## 🤖 JSRPC 浏览器引擎
-
-```python
-from fp_sentinel.browser import BrowserEngine
-from fp_sentinel.models import BrowserConfig, RPCConfig
-
-engine = BrowserEngine(
-    BrowserConfig(headless=True, stealth_mode=True),
-    RPCConfig(port=18800),
-)
-
-session = await engine.start()
-await engine.navigate(session.session_id, "https://target.com/login")
-
-# 注入函数 Hook
-await engine.inject_hook(session.session_id, "encrypt", "trace")
-
-# 自动捕获加密密钥
-await engine.inject_crypto_hooks(session.session_id)
-
-# 远程调用
-result = await engine.call_function(
-    session.session_id, "encryptPassword", ["test123"]
-)
-```
-
-### 内置 Hook 脚本
-
-| 脚本 | 功能 |
-|------|------|
-| `rpc_bridge.js` | RPC 通信桥接（WebSocket） |
-| `crypto_hooks.js` | Web Crypto API / CryptoJS / JSEncrypt 自动 Hook |
-| `cookie_hooks.js` | Cookie 读写监控 |
-| `xhr_hooks.js` | XHR/Fetch 请求监控 |
-| `anti_detect.js` | 反检测（隐藏 webdriver/修改指纹） |
-
----
-
-## 📊 动态风险评分
-
-```python
-from fp_sentinel.analysis import ChainRiskScorer, AssetContext
-
-scorer = ChainRiskScorer()
-context = AssetContext(
-    data_sensitivity=0.8,
-    user_count=100000,
-    network_exposure="public",
-    has_waf=True,
-)
-
-risk = scorer.score(chain, context)
-print(f"风险评分: {risk.overall_score:.2f}")
-print(f"严重级别: {risk.severity}")
-print(f"CVSS: {risk.cvss}, EPSS: {risk.epss}")
-```
-
----
-
-## ⚡ 性能基准
-
-```bash
-# 运行性能测试
-python -c "
-from fp_sentinel.benchmark import BenchmarkRunner
-runner = BenchmarkRunner()
-report = runner.run('/path/to/project')
-print(runner.generate_report(report))
-"
-```
+## 性能基准
 
 | 指标 | 基线 |
 |------|------|
 | 扫描速度 | > 500 行/秒 |
-| 10万行耗时 | < 3 分钟 |
+| 10 万行耗时 | < 3 分钟 |
 | 内存占用 | < 2 GB |
 
 ---
 
-## 🗺️ 路线图
+## 版本历史
 
-### v1.0 ✅
-- [x] MCP Server（8 个工具）
-- [x] 三层过滤架构
-- [x] CLI 命令行工具
-- [x] Web 仪表板
-- [x] Java 误报规则库
+详见 [CHANGELOG.md](CHANGELOG.md)。
 
-### v2.0 ✅
-- [x] JS/TS 审计支持（50+ 规则）
-- [x] Python 审计支持（20 规则）
-- [x] JSRPC 浏览器引擎
-- [x] 四级降噪引擎
-- [x] 红蓝对抗循环
-- [x] 攻击链发现（10种模板）
-- [x] 动态风险评分
-- [x] AIGC 安全规则
-- [x] 性能基准测试
+### 主要里程碑
 
-### v2.1 🚧
-- [ ] Go 语言规则集
-- [ ] Rust 语言规则集
-- [ ] IDE 插件（VS Code）
-- [ ] 团队协作与多用户
+| 版本 | 日期 | 关键特性 |
+|------|------|---------|
+| v1.0 | — | MCP Server、Java 规则库、三层过滤 |
+| v2.0 | 2026-09-06 | 四级降噪、红蓝对抗、JSRPC 浏览器、攻击链 |
+| v2.3 | 2026-09-07 | Go 语言、规则自动调优、YAML 自定义规则 |
+| v2.5 | 2026-09-07 | 企业权限、任务管理、通知、画像 |
+| **v3.1** | **2026-09-10** | **AI 渗透测试、Auto-PR、DevSecOps、行业对标、隐私计算** |
 
 ---
 
-## 🤝 贡献
-
-欢迎贡献！请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 📄 License
+## License
 
 [MIT License](LICENSE) — 自由使用，自由修改，自由分发。
 

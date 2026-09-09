@@ -37,10 +37,47 @@ from .target_validator import (
     verify,
 )
 
+# V3.0 AI Pentest subpackage
+from .v3_ai_pentest import (  # noqa: F401
+    AttackChainReasoner,
+    ChainReasoningReport,
+    ReasoningChain,
+    EnhancedReasoningNode,
+    EnhancedReasoningEdge,
+    VisualizationFormat,
+    to_mermaid,
+    to_dot,
+    to_json_graph,
+    to_ascii,
+    to_html,
+    PoCAutoGenerator,
+    ChainAwarePocResult,
+    GeneratedPocScript,
+    generate_chain_poc,
+    generate_verification_suite,
+    AutoVerifier,
+    VerificationRecord,
+    VerificationSession,
+    verify_attack_chain,
+    LabEnvironment,
+    LabTarget,
+    LabStatus,
+)
+
 __all__ = [
+    # V2.x attack
     "PocTemplate", "PocInstance", "POC_TEMPLATES", "UnsafeTargetError",
     "assert_local", "generate_poc", "list_vuln_types", "forge_jwt_token",
     "ExploitabilityResult", "ReachabilityLevel", "assess", "assess_many",
     "AttackChainReport", "ChainPath", "ChainStep", "SinglePoint", "orchestrate",
     "VerifyStatus", "VerifyResult", "docker_available", "verify",
+    # V3.0 AI Pentest
+    "AttackChainReasoner", "ChainReasoningReport", "ReasoningChain",
+    "EnhancedReasoningNode", "EnhancedReasoningEdge", "VisualizationFormat",
+    "to_mermaid", "to_dot", "to_json_graph", "to_ascii", "to_html",
+    "PoCAutoGenerator", "ChainAwarePocResult", "GeneratedPocScript",
+    "generate_chain_poc", "generate_verification_suite",
+    "AutoVerifier", "VerificationRecord", "VerificationSession",
+    "verify_attack_chain",
+    "LabEnvironment", "LabTarget", "LabStatus",
 ]

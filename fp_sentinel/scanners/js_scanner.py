@@ -6,15 +6,21 @@ JavaScript/TypeScript 专用安全扫描器
 - Semgrep JS/TS 规则扫描
 - npm 依赖漏洞检查
 - 敏感信息熵检测
+
+v2.5.1 P1 性能优化:
+- 大文件阈值限制（>MAX_FILE_SIZE_BYTES 跳过）
+- 文件缓存上限（MAX_FILE_CACHE_ENTRIES），防止内存泄漏
+- 逐文件处理后主动清理缓存
+- 单次文件读取复用行列表
 """
 
 import asyncio
 import json
 import logging
-import re
 import math
+import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 from .base import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
@@ -22,6 +28,11 @@ from ..rules.js import JS_SECURITY_RULES, JS_SECURITY_GUARD_PATTERNS
 from ..preprocessors import looks_heavily_obfuscated, preprocess_javascript
 
 logger = logging.getLogger(__name__)
+
+# ── v2.5.1 性能调优常量 ──
+MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024   # 单文件 2MB 上限
+MAX_FILE_CACHE_ENTRIES = 50              # 文件缓存最大条目数（防内存泄漏）
+CACHE_EVICTION_BATCH = 20               # 超出上限时一次清理的条目数
 
 # 规则 compile 缓存（进程级，pattern -> 已编译对象；编译失败缓存 None）
 _RULE_COMPILE_CACHE: Dict[str, Optional["re.Pattern"]] = {}
@@ -75,6 +86,7 @@ class JSScanner(BaseScanner):
         self.check_secrets = self.config.get("check_hardcoded_secrets", True)
         self.ast_analysis = self.config.get("ast_analysis", False)
         self.preprocess_minified = self.config.get("preprocess_minified", True)
+        # v2.5.1: 使用有界字典实现 LRU 效果，防止内存泄漏
         self._file_cache: Dict[str, str] = {}
         self._preprocess_cache: Dict[str, Any] = {}
         self._preprocess_warnings: List[str] = []
@@ -89,8 +101,10 @@ class JSScanner(BaseScanner):
         **kwargs
     ) -> List[ScanResult]:
         """扫描目标路径的 JS/TS 文件"""
-        results = []
+        results: List[ScanResult] = []
         self._preprocess_warnings.clear()
+        # v2.5.1: 开始新扫描时清理缓存（防跨扫描内存泄漏）
+        self._file_cache.clear()
         target = Path(target_path)
 
         if target.is_file():
@@ -107,6 +121,9 @@ class JSScanner(BaseScanner):
         rule_results = await self._scan_with_rules(files)
         results.extend(rule_results)
 
+        # v2.5.1: 规则扫描完成后立即清理缓存
+        self._evict_cache_if_needed(force=True)
+
         # 2. 敏感信息检测
         if self.check_secrets:
             secret_results = await self._scan_secrets(files)
@@ -117,6 +134,8 @@ class JSScanner(BaseScanner):
             dep_results = await self._check_npm_audit(target)
             results.extend(dep_results)
 
+        # 最终清理
+        self.clear_cache()
         logger.info(f"JS Scanner found {len(results)} issues")
         return results
 
@@ -125,7 +144,7 @@ class JSScanner(BaseScanner):
         return list(dict.fromkeys(self._preprocess_warnings))
 
     def _collect_js_files(self, directory: Path) -> List[Path]:
-        """收集目录中的 JS/TS 文件"""
+        """收集目录中的 JS/TS 文件（v2.5.1: 跳过超大文件）"""
         files = []
         skip_dirs = {
             "node_modules", ".git", "dist", "build", "vendor",
@@ -137,6 +156,13 @@ class JSScanner(BaseScanner):
             if any(skip in path.parts for skip in skip_dirs):
                 continue
             if path.suffix.lower() in JS_EXTENSIONS and path.is_file():
+                # v2.5.1: 跳过超大文件
+                try:
+                    if path.stat().st_size > MAX_FILE_SIZE_BYTES:
+                        logger.debug(f"Skipping large file: {path} (> {MAX_FILE_SIZE_BYTES} bytes)")
+                        continue
+                except OSError:
+                    pass
                 files.append(path)
 
         return files
@@ -146,8 +172,10 @@ class JSScanner(BaseScanner):
 
         容错策略（v2.1.0 A2）：单条规则 compile/匹配异常仅跳过该规则自身，
         不中断同文件剩余规则。
+        v2.5.1: 每处理 N 个文件后主动清理缓存，防止大项目扫描内存泄漏。
         """
-        results = []
+        results: List[ScanResult] = []
+        files_since_cleanup = 0
 
         for file_path in files:
             try:
@@ -215,6 +243,12 @@ class JSScanner(BaseScanner):
             except Exception as e:
                 logger.error(f"Error scanning {file_path}: {e}")
 
+            # v2.5.1: 定期清理缓存（每处理完 10 个文件）
+            files_since_cleanup += 1
+            if files_since_cleanup >= 10:
+                self._evict_cache_if_needed()
+                files_since_cleanup = 0
+
         return results
 
     @staticmethod
@@ -264,8 +298,8 @@ class JSScanner(BaseScanner):
         return False
 
     async def _scan_secrets(self, files: List[Path]) -> List[ScanResult]:
-        """扫描敏感信息"""
-        results = []
+        """扫描敏感信息（v2.5.1: 每个文件处理完后释放缓存）"""
+        results: List[ScanResult] = []
 
         for file_path in files:
             try:
@@ -305,6 +339,8 @@ class JSScanner(BaseScanner):
                                 cwe="CWE-798",
                                 metadata=metadata,
                             ))
+                # v2.5.1: 每个文件处理后从缓存释放
+                self._file_cache.pop(str(file_path), None)
             except Exception as e:
                 logger.error(f"Error scanning secrets in {file_path}: {e}")
 
@@ -312,7 +348,7 @@ class JSScanner(BaseScanner):
 
     async def _check_npm_audit(self, project_dir: Path) -> List[ScanResult]:
         """检查 npm 依赖漏洞"""
-        results = []
+        results: List[ScanResult] = []
         package_json = project_dir / "package.json"
 
         if not package_json.exists():
@@ -380,13 +416,20 @@ class JSScanner(BaseScanner):
         return result.content, result
 
     def _read_file(self, file_path: Path) -> Optional[str]:
-        """读取文件内容（带缓存）"""
+        """读取文件内容（带大小上限的缓存，v2.5.1: 有界 LRU）"""
         path_str = str(file_path)
         if path_str in self._file_cache:
             return self._file_cache[path_str]
 
         try:
+            # v2.5.1: 超大会在 collect 阶段跳过，但这里再做一次防御性检查
+            file_size = file_path.stat().st_size
+            if file_size > MAX_FILE_SIZE_BYTES:
+                logger.debug(f"Skipping large file at read time: {path_str}")
+                return None
             content = file_path.read_text(encoding="utf-8", errors="ignore")
+            # v2.5.1: 缓存写入前先检查是否需要清理（防内存泄漏）
+            self._evict_cache_if_needed()
             self._file_cache[path_str] = content
             return content
         except Exception as e:
@@ -414,7 +457,7 @@ class JSScanner(BaseScanner):
         if not text:
             return 0.0
 
-        freq = {}
+        freq: Dict[str, int] = {}
         for char in text:
             freq[char] = freq.get(char, 0) + 1
 
@@ -426,6 +469,26 @@ class JSScanner(BaseScanner):
                 entropy -= p * math.log2(p)
 
         return entropy
+
+    # ── v2.5.1 缓存管理（防内存泄漏） ──
+
+    def _evict_cache_if_needed(self, force: bool = False) -> None:
+        """若缓存超过上限，驱逐最早写入的条目
+
+        Args:
+            force: 强制清理，不检查上限
+        """
+        if not force and len(self._file_cache) <= MAX_FILE_CACHE_ENTRIES:
+            return
+
+        if force:
+            self._file_cache.clear()
+            return
+
+        # 驱逐最旧的 CACHE_EVICTION_BATCH 个条目（LRU 近似）
+        keys_to_remove = list(self._file_cache.keys())[:CACHE_EVICTION_BATCH]
+        for k in keys_to_remove:
+            self._file_cache.pop(k, None)
 
     def clear_cache(self):
         """清除文件缓存"""

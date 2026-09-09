@@ -633,16 +633,340 @@ AIGC_SECURITY_RULES = [
 ]
 
 
+# ─────────────────────── XSS 增强规则 (v2.3.0) ───────────────────────
+
+XSS_ENHANCED_RULES_V230 = [
+    CustomRule(
+        rule_id="js.xss.svg-onload",
+        description="SVG onload/onerror 事件处理器可能导致 XSS",
+        severity="HIGH",
+        confidence=0.8,
+        code_pattern=r"<svg\b[^>]*\bon(?:load|error|begin|end)\s*=",
+        category="XSS",
+        cwe="CWE-79",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.xss.template-literal-xss",
+        description="模板字符串直接写入 DOM 导致 XSS",
+        severity="HIGH",
+        confidence=0.75,
+        code_pattern=r"""(?:\.innerHTML|\.outerHTML)\s*=\s*`[^`]*\$\{[^`]*(?:req\.|params|query|location|document\.)""",
+        category="XSS",
+        cwe="CWE-79",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.xss.document-domain",
+        description="document.domain 放松可能导致跨域安全策略失效",
+        severity="MEDIUM",
+        confidence=0.6,
+        code_pattern=r"document\.domain\s*=",
+        category="XSS",
+        cwe="CWE-346",
+        owasp="A01:2021 - Broken Access Control",
+        false_positive_indicators=["window.location", "===", "!=="],
+    ),
+    CustomRule(
+        rule_id="js.xss.iframe-sandbox-escape",
+        description="sandbox iframe 中可能存在逃逸向量",
+        severity="MEDIUM",
+        confidence=0.45,
+        code_pattern=r"""iframe[^>]*allow-(?:scripts|same-origin|top-navigation|forms|popups)""",
+        category="XSS",
+        cwe="CWE-1021",
+        owasp="A04:2021 - Insecure Design",
+    ),
+    CustomRule(
+        rule_id="js.xss.anchor-target-rel",
+        description="target=_blank 未搭配 rel=noopener 可能遭受 tabnabbing",
+        severity="MEDIUM",
+        confidence=0.65,
+        code_pattern=r"""target\s*=\s*["']_blank["'](?!.*rel\s*=)""",
+        category="XSS",
+        cwe="CWE-1021",
+        owasp="A05:2021 - Security Misconfiguration",
+        false_positive_indicators=["noopener", "noreferrer"],
+    ),
+]
+
+
+# ─────────────────────── 原型污染增强规则 (v2.3.0) ───────────────────────
+
+PROTO_POLLUTION_ENHANCED_V230 = [
+    CustomRule(
+        rule_id="js.proto.proto-access",
+        description="直接使用 __proto__ 访问可导致原型污染",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"""["']__proto__["']""",
+        category="PROTOTYPE_POLLUTION",
+        cwe="CWE-1321",
+        owasp="A03:2021 - Injection",
+        false_positive_indicators=["hasOwnProperty", "Object.create(null)", "Object.freeze", "prototype"],
+    ),
+    CustomRule(
+        rule_id="js.proto.constructor-prototype",
+        description="constructor.prototype 动态赋值可导致原型污染",
+        severity="MEDIUM",
+        confidence=0.6,
+        code_pattern=r"""(?:constructor|["']constructor["']).*?(?:prototype|["']prototype["'])""",
+        category="PROTOTYPE_POLLUTION",
+        cwe="CWE-1321",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.proto.json-parse-unsafe",
+        description="JSON.parse 处理用户输入后直接解构/合并可能导致原型污染",
+        severity="HIGH",
+        confidence=0.65,
+        code_pattern=r"""JSON\.parse\s*\([^)]*(?:body|input|params|req\.|data)[^)]*\)\s*[\.{[]""",
+        category="PROTOTYPE_POLLUTION",
+        cwe="CWE-1321",
+        owasp="A03:2021 - Injection",
+        false_positive_indicators=["hasOwnProperty", "Object.create(null)", "Map"],
+    ),
+    CustomRule(
+        rule_id="js.proto.array-prototype-pollution",
+        description="Array.prototype 或 Object.prototype 方法被重写",
+        severity="MEDIUM",
+        confidence=0.55,
+        code_pattern=r"(?:Array|Object|Function)\.prototype\.\w+\s*=",
+        category="PROTOTYPE_POLLUTION",
+        cwe="CWE-1321",
+        owasp="A03:2021 - Injection",
+    ),
+]
+
+
+# ─────────────────────── 不安全的 eval/Function 增强规则 (v2.3.0) ───────────────────────
+
+INJECTION_ENHANCED_V230 = [
+    CustomRule(
+        rule_id="js.injection.indirect-eval",
+        description="间接 eval (globalThis.eval/window.eval) 执行任意代码",
+        severity="CRITICAL",
+        confidence=0.85,
+        code_pattern=r"""globalThis\.eval|window\.eval|self\.eval""",
+        category="INJECTION",
+        cwe="CWE-95",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.injection.Reflect-apply",
+        description="Reflect.apply 配合用户输入动态调用危险函数",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"Reflect\.apply\s*\(\s*(?:req\.|params|input|user|fn)",
+        category="INJECTION",
+        cwe="CWE-95",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.injection.createElement-script",
+        description="createElement('script') 动态创建 script 元素",
+        severity="HIGH",
+        confidence=0.75,
+        code_pattern=r"""document\.createElement\s*\(\s*["']script["']\s*\)""",
+        category="INJECTION",
+        cwe="CWE-95",
+        owasp="A03:2021 - Injection",
+        false_positive_indicators=["type: 'module'", "data-"],
+    ),
+    CustomRule(
+        rule_id="js.injection.win-location-js",
+        description="window.location 赋值为 javascript: 伪协议 URL",
+        severity="HIGH",
+        confidence=0.8,
+        code_pattern=r"""(?:window\.)?location\s*=\s*["']javascript:""",
+        category="INJECTION",
+        cwe="CWE-87",
+        owasp="A03:2021 - Injection",
+    ),
+]
+
+
+# ─────────────────────── 敏感信息泄露增强规则 (v2.3.0) ───────────────────────
+
+SECRETS_ENHANCED_V230 = [
+    CustomRule(
+        rule_id="js.secrets.console-sensitive",
+        description="console 输出可能泄露敏感数据 (Token/Password/用户数据)",
+        severity="LOW",
+        confidence=0.4,
+        code_pattern=r"""console\.(?:log|debug|info|warn|error)\s*\([^)]*(?:password|token|secret|key|auth|ssn|credit)""",
+        category="SECRETS",
+        cwe="CWE-532",
+        owasp="A09:2021 - Security Logging and Monitoring Failures",
+        false_positive_indicators=["redact", "mask", "obfuscate", "***"],
+    ),
+    CustomRule(
+        rule_id="js.secrets.error-stack-leak",
+        description="Error 堆栈信息直接暴露给客户端",
+        severity="MEDIUM",
+        confidence=0.5,
+        code_pattern=r"""(?:res\.send|res\.json|res\.end)\s*\([^)]*(?:err\.stack|error\.stack|e\.stack)""",
+        category="SECRETS",
+        cwe="CWE-209",
+        owasp="A04:2021 - Insecure Design",
+        file_pattern="*.js",
+    ),
+    CustomRule(
+        rule_id="js.secrets.url-credential-leak",
+        description="URL 中携带凭证信息",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"""https?://[^/\s:]+:[^/\s@]+@[^/\s]+""",
+        category="SECRETS",
+        cwe="CWE-598",
+        owasp="A02:2021 - Cryptographic Failures",
+    ),
+    CustomRule(
+        rule_id="js.secrets.google-api-key",
+        description="前端代码中硬编码 Google API Key",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"AIza[0-9A-Za-z_-]{35}",
+        category="SECRETS",
+        cwe="CWE-798",
+        owasp="A07:2021 - Identification and Authentication Failures",
+    ),
+    CustomRule(
+        rule_id="js.secrets.jwt-in-localstorage",
+        description="JWT Token 存储在 localStorage 中，易被 XSS 窃取",
+        severity="MEDIUM",
+        confidence=0.6,
+        code_pattern=r"""localStorage\.setItem\s*\(\s*["'](?:token|jwt|access_token)["']""",
+        category="SECRETS",
+        cwe="CWE-312",
+        owasp="A02:2021 - Cryptographic Failures",
+    ),
+]
+
+
+# ─────────────────────── 不安全 DOM 操作增强规则 (v2.3.0) ───────────────────────
+
+UNSAFE_DOM_ENHANCED_V230 = [
+    CustomRule(
+        rule_id="js.unsafe.document-referrer-leak",
+        description="document.referrer 可能泄露敏感来源信息",
+        severity="LOW",
+        confidence=0.4,
+        code_pattern=r"document\.referrer",
+        category="UNSAFE",
+        cwe="CWE-200",
+        owasp="A01:2021 - Broken Access Control",
+        false_positive_indicators=["window.location.href", "return"],
+    ),
+    CustomRule(
+        rule_id="js.unsafe.name-window-leak",
+        description="window.name 跨页面携带数据可能被恶意利用",
+        severity="MEDIUM",
+        confidence=0.5,
+        code_pattern=r"window\.name\s*=",
+        category="UNSAFE",
+        cwe="CWE-345",
+        owasp="A04:2021 - Insecure Design",
+    ),
+    CustomRule(
+        rule_id="js.unsafe.worker-user-input",
+        description="Worker 构造器传入用户可控 URL",
+        severity="HIGH",
+        confidence=0.7,
+        code_pattern=r"""(?:new\s+Worker|new\s+SharedWorker)\s*\(\s*(?:req\.|params|input|user)""",
+        category="UNSAFE",
+        cwe="CWE-918",
+        owasp="A10:2021 - Server-Side Request Forgery",
+    ),
+    CustomRule(
+        rule_id="js.unsafe.document-write-external",
+        description="document.write 写入外部脚本",
+        severity="CRITICAL",
+        confidence=0.8,
+        code_pattern=r"""document\.write\s*\(\s*["'][^"']*<script""",
+        category="XSS",
+        cwe="CWE-79",
+        owasp="A03:2021 - Injection",
+    ),
+    CustomRule(
+        rule_id="js.unsafe.override-promise",
+        description="覆盖原生 Promise/Array 方法可能导致业务逻辑劫持",
+        severity="MEDIUM",
+        confidence=0.45,
+        code_pattern=r"(?:Promise|Array|Object|Symbol)\.(?:all|race|resolve|reject|from|assign|keys)\s*=",
+        category="UNSAFE",
+        cwe="CWE-1021",
+        owasp="A04:2021 - Insecure Design",
+    ),
+]
+
+
+# ─────────────────────── TypeScript 特定规则 (v2.3.0) ───────────────────────
+
+TYPESCRIPT_RULES_V230 = [
+    CustomRule(
+        rule_id="ts.any-typed-user-input",
+        description="any 类型接收用户输入数据，绕过类型安全检查",
+        severity="LOW",
+        confidence=0.4,
+        code_pattern=r"""(?:body|params|query)\s*:\s*any\b""",
+        category="INSECURE_TYPING",
+        cwe="CWE-843",
+        owasp="A04:2021 - Insecure Design",
+        file_pattern="*.ts",
+    ),
+    CustomRule(
+        rule_id="ts.enum-type-juggling",
+        description="TypeScript enum 用于外部输入可能导致类型强制绕过",
+        severity="LOW",
+        confidence=0.3,
+        code_pattern=r"""(?:req\.|body|params)\[[\w"']+\]\s*as\s*\w+""",
+        category="INSECURE_TYPING",
+        cwe="CWE-843",
+        owasp="A04:2021 - Insecure Design",
+        file_pattern="*.ts",
+    ),
+    CustomRule(
+        rule_id="ts.suppress-implicit-any",
+        description="// @ts-ignore / @ts-nocheck 屏蔽了类型错误检查",
+        severity="LOW",
+        confidence=0.35,
+        code_pattern=r"""//\s*@(ts-ignore|ts-nocheck)""",
+        category="INSECURE_TYPING",
+        cwe="CWE-1078",
+        owasp="A04:2021 - Insecure Design",
+        file_pattern="*.ts",
+    ),
+    CustomRule(
+        rule_id="ts.non-null-assertion-on-input",
+        description="对请求数据使用非空断言（!）可能导致未定义行为",
+        severity="MEDIUM",
+        confidence=0.5,
+        code_pattern=r"""(?:req\.(?:body|params|query)|body|params)\s*!""",
+        category="INSECURE_TYPING",
+        cwe="CWE-457",
+        owasp="A04:2021 - Insecure Design",
+        file_pattern="*.ts",
+    ),
+]
+
+
 # ─────────────────────── 汇总所有规则 ───────────────────────
 
 JS_SECURITY_RULES: List[CustomRule] = (
     XSS_RULES
+    + XSS_ENHANCED_RULES_V230  # v2.3.0 新增
     + INJECTION_RULES
+    + INJECTION_ENHANCED_V230  # v2.3.0 新增
     + PROTOTYPE_POLLUTION_RULES
+    + PROTO_POLLUTION_ENHANCED_V230  # v2.3.0 新增
     + CRYPTO_RULES
     + SECRETS_RULES
+    + SECRETS_ENHANCED_V230  # v2.3.0 新增
     + TRANSPORT_RULES
     + UNSAFE_RULES
+    + UNSAFE_DOM_ENHANCED_V230  # v2.3.0 新增
+    + TYPESCRIPT_RULES_V230  # v2.3.0 新增
     + NODEJS_RULES
     + AIGC_SECURITY_RULES  # v2.0 新增
 )
@@ -799,6 +1123,45 @@ JS_SECURITY_GUARD_PATTERNS: Dict[str, List[str]] = {
         r"values\s*\(",
         r"\?\s*[,\)\]`\"']",
         r"parameteriz",
+    ],
+    # v2.3.0 新增 guard 组
+    "xss_enhanced": [
+        r"DOMPurify\.sanitize",
+        r"sanitize\s*\(",
+        r"textContent\s*=",
+        r"innerText\s*=",
+        r"createTextNode",
+        r"\.text\s*\(",
+        r"escapeHtml\s*\(",
+    ],
+    "prototype_pollution_enhanced": [
+        r"Object\.freeze\s*\(",
+        r"Object\.seal\s*\(",
+        r"Object\.create\s*\(\s*null\s*\)",
+        r"Object\.hasOwn\s*\(",
+        r"hasOwnProperty\s*\(",
+        r"Map\s*\(",
+        r"WeakMap\s*\(",
+    ],
+    "template_injection": [
+        r"\.escape\s*\(",
+        r"Handlebars\.escapeExpression",
+        r"e\s*\(",                 # Handlebars escape 函数
+        r"htmlEscape\s*\(",
+    ],
+    "worker_ssrf": [
+        r"importScripts\s*\(",
+        r"module\s*:\s*{",
+        r"type\s*:\s*['\"]module['\"]",
+    ],
+    "ts_typing": [
+        r"z\.string\(\)",
+        r"z\.object\s*\(",
+        r"class-validator",
+        r"class-transformer",
+        r"Joi\.string\s*\(",
+        r"joi\.",
+        r"yup\.",
     ],
 }
 

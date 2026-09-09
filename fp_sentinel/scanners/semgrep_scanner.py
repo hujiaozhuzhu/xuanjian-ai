@@ -7,7 +7,9 @@ Semgrep 扫描器
 import asyncio
 import json
 import logging
+import os
 import shutil
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
@@ -22,12 +24,12 @@ SEMGREP_SEVERITY_MAP = {
     "INFO": Severity.LOW,
 }
 
-# Java 安全规则集
+# Java 安全规则集 (v3.0: 移除无效的 p/owasp-java 避免 404 错误)
 JAVA_SECURITY_RULESETS = [
     "p/java",
-    "p/owasp-java",
     "p/security-audit",
     "p/secrets",
+    "p/owasp-top-ten",
 ]
 
 # Python 安全规则集
@@ -45,6 +47,45 @@ JAVASCRIPT_SECURITY_RULESETS = [
     "p/owasp-top-ten",
     "p/security-audit",
 ]
+
+# Go 安全规则集 (v2.3.0)
+GO_SECURITY_RULESETS = [
+    "p/golang",
+    "p/owasp-top-ten",
+    "p/security-audit",
+    "p/secrets",
+    "p/r2c-security-audit",
+    "p/command-injection",
+    "p/insecure-transport",
+    "p/sql-injection",
+]
+
+# PHP 安全规则集 (v2.5.1)
+PHP_SECURITY_RULESETS = [
+    "p/php",
+    "p/security-audit",
+    "p/secrets",
+]
+
+
+def _builtin_rule_path(filename: str) -> Optional[str]:
+    """Resolve a bundled Semgrep YAML rule file shipped with fp-sentinel."""
+    rules_dir = Path(__file__).resolve().parent.parent / "rules" / "semgrep"
+    candidate = rules_dir / filename
+    return str(candidate) if candidate.is_file() else None
+
+
+# P1-Fix: 反序列化专项 Semgrep 规则（Python pickle + PHP Phar 触发点）
+DESER_RULE_FILES = (
+    _builtin_rule_path("python-deserialization-rules.yaml"),
+    _builtin_rule_path("php-phar-deserialization-rules.yaml"),
+)
+
+# v3.0: Java 反序列化全谱系规则 (ObjectInputStream / Fastjson / Jackson / Shiro)
+JAVA_DESER_RULE_FILE = _builtin_rule_path("java-deserialization-rules.yaml")
+
+# v3.0: PHP POP链 + Phar + unserialize + XSS 增强规则
+PHP_POP_DESER_RULE_FILE = _builtin_rule_path("php-pop-deser-rules.yaml")
 
 
 class SemgrepScanner(BaseScanner):
@@ -120,6 +161,28 @@ class SemgrepScanner(BaseScanner):
             logger.error(f"Semgrep scan failed: {e}")
             return []
 
+    def _validate_rulesets(self, rulesets: List[str]) -> List[str]:
+        """v3.0: 过滤无效的 Semgrep registry 规则集，避免因单个规则集 404 导致整个扫描失败"""
+        import subprocess
+        valid = []
+        for rs in rulesets:
+            if rs.startswith("p/"):
+                # registry 规则集：尝试探测是否可用
+                try:
+                    r = subprocess.run(
+                        ["semgrep", "check", "--config", rs, "--dryrun", "--quiet"],
+                        capture_output=True, timeout=15,
+                    )
+                    if r.returncode == 0:
+                        valid.append(rs)
+                    else:
+                        logger.warning(f"Semgrep ruleset {rs} unavailable (HTTP {r.returncode}), skipping")
+                except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired):
+                    logger.warning(f"Semgrep ruleset {rs} check failed, skipping")
+            else:
+                valid.append(rs)
+        return valid or rulesets  # 如果全部无效，回退到原始列表
+
     def _build_command(
         self,
         target_path: str,
@@ -127,31 +190,67 @@ class SemgrepScanner(BaseScanner):
         rulesets: Optional[List[str]],
         config_files: Optional[List[str]],
     ) -> List[str]:
-        """构建 Semgrep 命令"""
+        """构建 Semgrep 命令
+
+        v2.5.1 P0-Fix: 修复 --config 与 --lang 参数冲突。
+        Semgrep 不允许 --config 和 --lang 同时出现：当指定 --config 时，
+        Semgrep 从规则声明中推断语言；--lang 仅在不提供任何 --config 的
+        纯语言过滤模式下使用。重构逻辑确保二者互斥。
+        """
         cmd = ["semgrep", "scan", "--json", "--quiet"]
+
+        # v3.0: 单文件扫描需要 --no-git-ignore
+        cmd.append("--no-git-ignore")
 
         # 设置并行数
         cmd.extend(["--jobs", str(self.jobs)])
 
-        # 设置规则
+        # 收集所有 --config 条目
+        config_entries: List[str] = []
+
         if config_files:
-            for f in config_files:
-                cmd.extend(["--config", f])
+            config_entries.extend(config_files)
         elif rulesets:
-            for r in rulesets:
-                cmd.extend(["--config", r])
+            config_entries.extend(rulesets)
         else:
-            # 使用默认规则集
+            # 使用默认规则集 (v2.3.0 新增 Go 规则集路由; v2.5.1 新增 PHP)
             default_rulesets = {
                 "java": JAVA_SECURITY_RULESETS,
                 "javascript": JAVASCRIPT_SECURITY_RULESETS,
                 "typescript": JAVASCRIPT_SECURITY_RULESETS,
+                "go": GO_SECURITY_RULESETS,
+                "php": PHP_SECURITY_RULESETS,
             }.get(language, PYTHON_SECURITY_RULESETS)
-            for r in default_rulesets:
-                cmd.extend(["--config", r])
+            config_entries.extend(default_rulesets)
 
-        # 语言过滤
-        if language and language != "auto":
+        # v2.5.1 P0-Fix: 按语言过滤反序列化专项规则，避免规则与语言不匹配
+        for builtin_rule in DESER_RULE_FILES:
+            if not builtin_rule:
+                continue
+            # 仅追加与当前语言匹配的反序列化规则
+            if language == "python" and "python-deserialization" in builtin_rule:
+                config_entries.append(builtin_rule)
+            elif language == "php" and "php-phar-deserialization" in builtin_rule:
+                config_entries.append(builtin_rule)
+            elif language in (None, "auto"):
+                # auto 模式保留全部（向后兼容）
+                config_entries.append(builtin_rule)
+
+        # v3.0: Java 反序列化全谱系规则（ObjectInputStream/Fastjson/Jackson/Shiro）
+        if JAVA_DESER_RULE_FILE and language in ("java", None, "auto"):
+            config_entries.append(JAVA_DESER_RULE_FILE)
+
+        # v3.0: PHP POP链 + Phar + unserialize + XSS 增强规则
+        if PHP_POP_DESER_RULE_FILE and language in ("php", None, "auto"):
+            config_entries.append(PHP_POP_DESER_RULE_FILE)
+
+        # 添加 --config 参数
+        for entry in config_entries:
+            cmd.extend(["--config", entry])
+
+        # v2.5.1 P0-Fix: 仅在没有 --config 时才使用 --lang
+        # Semgrep CLI 不支持同时传入 --config 和 --lang
+        if not config_entries and language and language != "auto":
             cmd.extend(["--lang", language])
 
         # 忽略路径

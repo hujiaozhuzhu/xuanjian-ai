@@ -2,6 +2,7 @@
 扫描器管理器
 
 统一调度多个扫描工具，聚合结果
+v2.3.0: 新增 Go 语言自动识别与 GoScanner 注册；增强 JS/TS 扩展名覆盖
 """
 
 import asyncio
@@ -17,19 +18,33 @@ logger = logging.getLogger(__name__)
 
 # JS/TS 文件扩展名
 JS_EXTENSIONS = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+# Go 文件扩展名
+GO_EXTENSIONS = {".go"}
 
 
 class ScannerManager:
     """扫描器管理器"""
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
-        self.config = config or {}
+        """Create a manager from either app-level or scanner-only config.
+
+        Older callers passed the complete application configuration while the
+        CLI passes ``AppConfig.scanners``.  Accept both shapes so scanner
+        settings are applied consistently across entry points.
+        """
+        raw_config = config or {}
+        nested_scanners = raw_config.get("scanners")
+        self.config = (
+            nested_scanners
+            if isinstance(nested_scanners, dict)
+            else raw_config
+        )
         self.scanners = {}
         self._init_scanners()
 
     def _init_scanners(self):
         """初始化扫描器"""
-        scanner_configs = self.config.get("scanners", {})
+        scanner_configs = self.config
 
         # Semgrep (通用)
         semgrep_config = scanner_configs.get("semgrep", {"enabled": True})
@@ -63,6 +78,15 @@ class ScannerManager:
                 self.scanners[ScanTool.PY_SCANNER] = PythonScanner(py_config)
         except ImportError:
             logger.debug("Python Scanner not available")
+
+        # Go Scanner (Go 规则正则扫描 v2.3.0)
+        try:
+            from .go_scanner import GoScanner
+            go_config = scanner_configs.get("go_scanner", {"enabled": True})
+            if go_config.get("enabled", True):
+                self.scanners[ScanTool.GO_SCANNER] = GoScanner(go_config)
+        except ImportError:
+            logger.debug("Go Scanner not available")
 
     async def scan(
         self,
@@ -133,8 +157,22 @@ class ScannerManager:
         return f"{result.file}:{result.line}:{result.rule_id}"
 
     def _detect_language(self, target_path: str) -> str:
-        """自动检测项目语言"""
+        """自动检测项目或单个源文件的语言。"""
         import os
+
+        # 单文件扫描不能通过 os.walk() 统计扩展名，先直接识别文件类型。
+        if os.path.isfile(target_path):
+            extension = os.path.splitext(target_path)[1].lower()
+            if extension in {".js", ".jsx", ".mjs", ".cjs"}:
+                return "javascript"
+            if extension in {".ts", ".tsx"}:
+                return "typescript"
+            if extension == ".py":
+                return "python"
+            if extension == ".java":
+                return "java"
+            if extension == ".go":
+                return "go"
 
         # 检查构建文件
         if os.path.exists(os.path.join(target_path, "pom.xml")):
@@ -170,17 +208,32 @@ class ScannerManager:
                 return "typescript"
             return "javascript"
 
-        if ext_count.get(".java", 0) > ext_count.get(".py", 0):
+        java_count = ext_count.get(".java", 0)
+        py_count = ext_count.get(".py", 0)
+
+        # A1-Fix: 反编译 Java 代码目录检测（无 pom.xml 但有大量 .java 文件）
+        if java_count >= 3 and java_count >= py_count:
             return "java"
-        if ext_count.get(".py", 0) > 0:
+        if java_count > py_count:
+            return "java"
+        if py_count > 0:
             return "python"
         if ext_count.get(".go", 0) > 0:
             return "go"
 
+        # A1-Fix: 默认回退时优先 Java（反编译代码最常见的目标语言）
+        if java_count > 0:
+            return "java"
+
         return "java"  # 默认 Java
 
     def _select_scanners(self, language: str) -> List[ScanTool]:
-        """根据语言选择扫描器"""
+        """根据语言选择扫描器
+
+        v2.3.0 更新：
+        - go: Semgrep + GoScanner (自定义规则引擎)
+        - 所有已注册扫描仪语言均自动匹配对应规则库，无需手动指定
+        """
         if language == "java":
             return [ScanTool.SEMGREP, ScanTool.FINDSECBUGS]
         elif language == "python":
@@ -194,7 +247,10 @@ class ScannerManager:
                 tools.append(ScanTool.JS_SCANNER)
             return tools
         elif language == "go":
-            return [ScanTool.SEMGREP]
+            tools = [ScanTool.SEMGREP]
+            if ScanTool.GO_SCANNER in self.scanners:
+                tools.append(ScanTool.GO_SCANNER)
+            return tools
         else:
             return [ScanTool.SEMGREP]
 

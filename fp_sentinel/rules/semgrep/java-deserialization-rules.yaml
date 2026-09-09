@@ -1,0 +1,209 @@
+rules:
+  # ================================================================
+  # Java 原生反序列化: ObjectInputStream.readObject()
+  # ================================================================
+  - id: java-objectinputstream-readobject
+    pattern-either:
+      - pattern: |
+          $OIS = new ObjectInputStream(...);
+          ...
+          $OBJ = $OIS.readObject();
+      - pattern: $OBJ = new ObjectInputStream($IS).readObject();
+    message: "检测到不安全的 ObjectInputStream.readObject() 调用。当反序列化来自用户输入（@RequestBody、Cookie、参数）的数据时，攻击者可通过构造恶意序列化对象实现远程代码执行（RCE）。Apache Commons Collections、Spring 等常见依赖中的 gadget chain 可被直接利用。应改用 ObjectInputFilter 白名单、JSON 格式或签名校验。"
+    languages:
+      - java
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/Deserialization_of_untrusted_data"
+        - "https://snyk.io/vuln/SNYK-JAVA-COMMONSCOLLECTIONS-456969"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: java-objectinputstream-user-source
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ = $OIS.readObject();
+          - pattern: $OIS.readObject()
+      - pattern-inside: |
+          $RETTYPE $METHOD(..., @RequestBody $TYPE $PARAM, ...) {
+            ...
+          }
+      - pattern-not-inside: |
+          if (...) { ... return ...; }
+    message: "ObjectInputStream.readObject() 读取来自 @RequestBody 的用户输入，存在 RCE 风险。"
+    languages:
+      - java
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+
+  # ================================================================
+  # Fastjson 反序列化: JSON.parseObject + @type
+  # ================================================================
+  - id: java-fastjson-parseobject
+    pattern-either:
+      - pattern: JSON.parseObject(...)
+      - pattern: $JSON.parseObject(...)
+      - pattern: com.alibaba.fastjson.JSON.parseObject(...)
+    message: "检测到 Fastjson JSON.parseObject() 调用。Fastjson <= 1.2.68 的 autoType 机制存在 JNDI 注入和反序列化 RCE 漏洞（如 CVE-2017-18349、CVE-2022-25845）。应启用 safeMode 或升级到 2.x，并使用 @type 白名单。"
+    languages:
+      - java
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://github.com/alibaba/fastjson/wiki/security_update_20170310"
+        - "https://nvd.nist.gov/vuln/detail/CVE-2022-25845"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: java-fastjson-parse
+    pattern-either:
+      - pattern: JSON.parse(...)
+      - pattern: $JSON.parse(...)
+    message: "检测到 Fastjson JSON.parse() 调用。同样存在 autoType 反序列化风险。"
+    languages:
+      - java
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+
+  # ================================================================
+  # Jackson 反序列化: enableDefaultTyping + CVE-2017-7525
+  # ================================================================
+  - id: java-jackson-defaulttyping
+    pattern-either:
+      - pattern: $MAPPER.enableDefaultTyping(...);
+      - pattern: ((ObjectMapper)$MAPPER).enableDefaultTyping(...);
+      - pattern: ObjectMapper().enableDefaultTyping();
+    message: "检测到 Jackson enableDefaultTyping() 调用（CVE-2017-7525）。此配置允许通过 @class 字段指定反序列化类型，攻击者可构造多态类型实现 RCE。应移除 enableDefaultTyping 并使用 @JsonTypeInfo 配合窄化类型白名单。"
+    languages:
+      - java
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://nvd.nist.gov/vuln/detail/CVE-2017-7525"
+        - "https://medium.com/@cowtowncoder/on-jackson-cves-dont-panic-here-is-what-you-need-to-know-54cd0d6e8062"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: java-jackson-readvalue
+    patterns:
+      - pattern-either:
+          - pattern: $MAPPER.readValue(..., $TYPE.class)
+          - pattern: $MAPPER.readValue(..., new TypeReference<$TYPE>(){})
+      - pattern-inside: |
+          $RETTYPE $METHOD(..., @RequestBody $BTYPE $PARAM, ...) {
+            ...
+          }
+    message: "Jackson readValue() 处理用户输入，如未禁用默认类型解析，存在 CVE-2017-7525 多态类型 RCE 风险。"
+    languages:
+      - java
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+
+  # ================================================================
+  # Shiro 反序列化: RememberMe + AES-CBC 默认密钥 (CVE-2016-4437)
+  # ================================================================
+  - id: java-shiro-rememberme-cookie
+    pattern-either:
+      - pattern: new Cookie($NAME, ...)
+      - pattern: response.addCookie(...)
+    message: "检测到 Cookie 设置操作。如果此 Cookie 是 Shiro RememberMe cookie，需确认不使用默认 AES 密钥（CVE-2016-4437 默认密钥 kPH+bIxk5D2deZiIxcaaaA==）。攻击者可伪造 rememberMe cookie 实现反序列化 RCE。应使用随机密钥并存储在安全的密钥管理系统中。"
+    languages:
+      - java
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://nvd.nist.gov/vuln/detail/CVE-2016-4437"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: java-shiro-hardcoded-key
+    patterns:
+      - pattern-either:
+          - pattern: $TYPE $NAME = "kPH+bIxk5D2deZiIxcaaaA==";
+          - pattern: $TYPE $NAME = "0AvVhmFLUs0KTA3Kprsdag==";
+          - pattern: $TYPE $NAME = "1ttlLdMvX4qEQy7spYQsLw==";
+          - pattern: $TYPE $NAME = "2A2VNi/S1v0KTA3Kprsdag==";
+          - pattern: $TYPE $NAME = "2AvVhdsgUs0KTA3Kprsdag==";
+          - pattern: $TYPE $NAME = "2AvVhmFLUs0FAT3Kprsdag==";
+          - pattern: $TYPE $NAME = "2AvVhmFLUs0KTA3Kprsdaw==";
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: .*key.*
+    message: "检测到硬编码的 Shiro RememberMe AES 密钥。这是 CVE-2016-4437 默认或已知密钥之一。攻击者可使用已知密钥构造恶意 rememberMe cookie，触发 Shiro 的反序列化 RCE（通常配合 CommonsCollections gadget）。必须使用 >= 256bit 随机密钥。"
+    languages:
+      - java
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-798: Use of Hard-coded Credentials"
+      references:
+        - "https://nvd.nist.gov/vuln/detail/CVE-2016-4437"
+      category: security
+      likelihood: HIGH
+      impact: CRITICAL
+
+  - id: java-shiro-aes-cbc-mode
+    patterns:
+      - pattern-either:
+          - pattern: AesCipherService $VAR = new AesCipherService();
+      - pattern-inside: |
+          class $CLASS {
+            ...
+          }
+    message: "检测到 AES-CBC 加密服务（Shiro 已知漏洞链）。Shiro 1.2.4 默认使用 AES-CBC + PKCS5Padding + 默认密钥，易受 Padding Oracle 攻击解密 rememberMe cookie。应升级到 >= 1.7.1（GCM 模式），并更换非默认密钥。"
+    languages:
+      - java
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      references:
+        - "https://nvd.nist.gov/vuln/detail/CVE-2016-4437"
+        - "https://nvd.nist.gov/vuln/detail/CVE-2019-12422"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  # ================================================================
+  # Java 通用 ObjectInput 创建检测
+  # ================================================================
+  - id: java-object-input-stream-creation
+    pattern-either:
+      - pattern: new ObjectInputStream($STREAM)
+      - pattern: $OIS.readObject()
+    message: "检测到 ObjectInputStream 使用。确认数据来源可信且已配置 ObjectInputFilter 白名单。"
+    languages:
+      - java
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH

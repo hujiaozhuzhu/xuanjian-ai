@@ -1,0 +1,79 @@
+rules:
+  - id: python-pickle-loads
+    pattern: pickle.loads(...)
+    message: "检测到不安全的 Python pickle.loads() 调用。pickle 反序列化不可信数据可导致远程代码执行（RCE）。建议使用 json 等安全格式替代，或对 pickle 数据实施 HMAC 签名校验。"
+    languages:
+      - python
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://docs.python.org/3/library/pickle.html#pickle.loads"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: python-pickle-load
+    pattern: pickle.load(...)
+    message: "检测到不安全的 Python pickle.load() 调用。pickle 反序列化不可信数据可导致远程代码执行（RCE）。建议使用 json 等安全格式替代。"
+    languages:
+      - python
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://docs.python.org/3/library/pickle.html#pickle.load"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: python-yaml-load
+    patterns:
+      - pattern: yaml.load(...)
+      - pattern-not: yaml.safe_load(...)
+    message: "检测到不安全的 yaml.load() 调用。yaml.load() 可实例化任意 Python 对象导致 RCE。请使用 yaml.safe_load() 替代。"
+    languages:
+      - python
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://pyyaml.org/wiki/PyYAMLDocumentation"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: python-shelve-open
+    pattern: shelve.open(...)
+    message: "检测到 shelve.open() 调用。shelve 模块底层使用 pickle，反序列化不可信数据可能导致 RCE。"
+    languages:
+      - python
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: python-marshal-loads
+    pattern: marshal.loads(...)
+    message: "检测到 marshal.loads() 调用。marshal 模块不安全，不应反序列化不可信数据。"
+    languages:
+      - python
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: HIGH
+      impact: HIGH

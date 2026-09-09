@@ -1,0 +1,147 @@
+rules:
+  # ================================================================
+  # PHP 反序列化: unserialize 用户输入
+  # ================================================================
+  - id: php-unserialize-user-input
+    patterns:
+      - pattern-either:
+          - pattern: unserialize($_POST[...])
+          - pattern: unserialize($_GET[...])
+          - pattern: unserialize($_REQUEST[...])
+          - pattern: unserialize($_COOKIE[...])
+          - pattern: unserialize($data)
+      - pattern-not: unserialize(hardcoded_string)
+    message: "检测到 unserialize() 调用，数据来源为用户输入（$_POST/$_GET/$_REQUEST/$_COOKIE）。攻击者可构造任意 POP 链（Property-Oriented Programming）实现远程代码执行。请使用 json_decode() 替代，或在使用 unserialize() 时设置 allowed_classes 选项限制反序列化类型。"
+    languages:
+      - php
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      owasp:
+        - "A08:2021 - Software and Data Integrity Failures"
+      references:
+        - "https://owasp.org/www-community/vulnerabilities/PHP_Object_Injection"
+        - "https://www.php.net/manual/en/function.unserialize.php"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  - id: php-unserialize-from-file
+    patterns:
+      - pattern-either:
+          - pattern: unserialize(file_get_contents(...))
+          - pattern: unserialize(fread(...))
+    message: "检测到从文件读取后 unserialize 操作。如果文件内容可被用户控制（如上传文件），存在 POP 链 RCE 风险。"
+    languages:
+      - php
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+
+  # ================================================================
+  # PHP Phar 反序列化 (文件操作触发元数据反序列化)
+  # ================================================================
+  - id: php-phar-file-operations
+    patterns:
+      - pattern-either:
+          - pattern: file_exists($ARG)
+          - pattern: is_file($ARG)
+          - pattern: fopen($ARG, ...)
+          - pattern: fread($H, ...)
+          - pattern: file_get_contents($ARG)
+          - pattern: filesize($ARG)
+      - pattern-not-inside: |
+          if (...) { return ...; }
+    message: "检测到文件操作函数调用。当参数可控且路径为 phar:// 包装器时，会自动反序列化 Phar 元数据导致 RCE。应校验文件路径、禁用 phar 流包装器（phar.readonly=1）或使用白名单。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      references:
+        - "https://www.php.net/manual/en/phar.using.intro.php"
+        - "https://bugs.php.net/bug.php?id=71222"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  - id: php-phar-deserialize-metadata
+    pattern-either:
+      - pattern: $PHAR->getMetadata()
+      - pattern: (new Phar($FILE))->getMetadata()
+    message: "检测到 Phar 元数据读取。Phar 的 metadata 以序列化形式存储，getMetadata() 会自动反序列化。如果 Phar 文件来源不可信，存在 RCE 风险。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+
+  # ================================================================
+  # PHP 魔术方法 POP 链检测 (__wakeup / __destruct)
+  # ================================================================
+  - id: php-magic-method-pop-sink
+    patterns:
+      - pattern-either:
+          - pattern: public function __destruct() { ... }
+          - pattern: public function __wakeup() { ... }
+    message: "检测到 __destruct 或 __wakeup 魔术方法。如果此类可被序列化且属性可控，可能成为 POP 链的一部分。需审查魔术方法中的操作（如 system、eval、file_put_contents）是否可被利用。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: MEDIUM
+      impact: HIGH
+
+  # ================================================================
+  # PHP 命令执行 + 反序列化组合 (system + $_POST)
+  # ================================================================
+  - id: php-system-with-user-input-in-class
+    patterns:
+      - pattern-either:
+          - pattern: system(...)
+          - pattern: exec(...)
+          - pattern: passthru(...)
+          - pattern: shell_exec(...)
+      - pattern-inside: |
+          class $CLASS {
+            ...
+          }
+    message: "检测到类中存在命令执行函数（system/exec/passthru/shell_exec）。如果此类属性可由用户输入控制且可被反序列化，可能导致 POP 链 RCE。"
+    languages:
+      - php
+    severity: ERROR
+    metadata:
+      cwe:
+        - "CWE-78: OS Command Injection"
+        - "CWE-502: Deserialization of Untrusted Data"
+      category: security
+      likelihood: HIGH
+      impact: HIGH
+
+  # ================================================================
+  # PHP XSS: 包含 $ 变量的echo语句（简化版，避免PHP parser限制）
+  # ================================================================
+  - id: php-xss-echo-with-variable
+    pattern-either:
+      - pattern: echo $OBJ;
+      - pattern: echo "...\"..." . $INPUT;
+      - pattern: echo $INPUT . "...\"...";
+    message: "检测到echo输出中包含变量，可能导致XSS。如果输出包含HTML/用户输入，应使用htmlspecialchars()转义。"
+    languages:
+      - php
+    severity: WARNING
+    metadata:
+      cwe:
+        - "CWE-79: Cross-site Scripting"
+      category: security
+      likelihood: LOW
+      impact: MEDIUM

@@ -4,15 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fp-sentinel"
-version = "2.2.3"
-description = "玄鉴 XuanJian AI - 代码审计误报排查 MCP Skill"
+version = "3.1.0"
+description = "玄鉴 XuanJian AI - AI 驱动的代码安全审计与红蓝对抗平台"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
     {name = "XuanJian AI"},
 ]
-keywords = ["code-audit", "security", "false-positive", "mcp", "java", "python"]
+keywords = ["code-audit", "security", "false-positive", "mcp", "ai-pentest", "devops", "privacy", "vulnerability", "red-team", "java", "python", "javascript", "go"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -76,3 +76,32 @@ include = ["fp_sentinel*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "fp_sentinel/notify/cli.py",
+    "fp_sentinel/devops/cli.py",
+    "fp_sentinel/devops/routes.py",
+    "fp_sentinel/devops/__init__.py",
+    "fp_sentinel/privacy/cli_commands.py",
+    "fp_sentinel/privacy/routes.py",
+    "fp_sentinel/auto_pr/cli.py",
+    "tests/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 95
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if __name__ == .__main__.",
+    "raise NotImplementedError",
+    "pass",
+    "except ImportError",
+    "except Exception",
+    "except httpx",
+    "logger.warning",
+    "logger.exception",
+]

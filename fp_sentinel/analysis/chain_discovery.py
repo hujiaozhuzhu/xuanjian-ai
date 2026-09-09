@@ -29,6 +29,7 @@ class EdgeType(str, Enum):
     PERMISSION = "permission"         # 权限关系
     NETWORK = "network"               # 网络关系
     DEPENDENCY = "dependency"         # 依赖关系
+    POP_CHAIN = "pop_chain"           # v3.0: POP链（反序列化→魔术方法跨行连接）
 
 
 class SinkType(str, Enum):

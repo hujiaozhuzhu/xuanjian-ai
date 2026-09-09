@@ -410,8 +410,9 @@ JAVA_FALSE_POSITIVE_RULES = [
     {
         "name": "java_deser_jackson",
         "rule_id_pattern": r"deserialization|DESERIALIZATION|object.input|unsafe.deserialization|deserializ",
-        "code_pattern": r"ObjectMapper|readValue|readTree|JsonParser|TypeReference|@JsonDeserialize|convertValue",
-        "reason": "使用Jackson JSON库，默认不支持任意类反序列化",
+        "code_pattern": r"ObjectMapper|readValue\(|readTree|JsonParser|TypeReference|@JsonDeserialize|convertValue",
+        "code_exclude_pattern": r"enableDefaultTyping",
+        "reason": "使用Jackson JSON库且未启用enableDefaultTyping，默认不支持任意类反序列化",
         "confidence": 0.7,
     },
 

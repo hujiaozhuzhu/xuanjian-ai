@@ -417,6 +417,18 @@ const app = createApp({
         nextTick(drawPieChart);
       } else if (index === 'findings') {
         loadFindings();
+      } else if (index === 'fp-stats') {
+        loadFpStats();
+      } else if (index === 'ai-pentest') {
+        aiForm.scanId = currentScanId.value;
+      } else if (index === 'industry') {
+        loadIndustryList();
+      } else if (index === 'privacy') {
+        // privacy loaded on demand
+      } else if (index === 'devops') {
+        refreshDevopsStats();
+      } else if (index === 'settings') {
+        refreshSettings();
       }
     }
 
@@ -541,6 +553,411 @@ const app = createApp({
       return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // ── FP Optimize v3.0 误报统计 ──
+    const fpStats = reactive({
+      total_feedbacks: 0,
+      fp_feedbacks: 0,
+      tp_feedbacks: 0,
+      unsure_feedbacks: 0,
+      fp_rate: 0,
+      target_fp_rate: 0.01,
+      fp_rate_trend: 'stable',
+      optimization_count: 0,
+    });
+    const fpRecommendations = ref([]);
+    const fpTopRules = ref([]);
+    const fpPatterns = ref([]);
+    const fpTrendData = ref([]);
+    const fpOptimizing = ref(false);
+
+    // ── v3.1 AI渗透测试 ──
+    const aiStats = reactive({ attackChains: 0, pocCount: 0, verifiedCount: 0, fixCount: 0 });
+    const aiForm = reactive({ scanId: '', target: 'http://127.0.0.1:1008' });
+    const aiLoading = reactive({ chain: false, poc: false, verify: false });
+    const aiChainReport = ref(null);
+    const aiVerifyResult = ref(null);
+    const aiPocResult = ref(null);
+
+    async function generateAttackChain() {
+      aiLoading.chain = true;
+      try {
+        const findings = findingsList.value.length > 0 ? findingsList.value : [];
+        const resp = await apiFetch('/api/pentest/attack-chain/reason', {
+          method: 'POST',
+          body: JSON.stringify({
+            findings: findings.map(f => ({ id: f.id, rule_id: f.original?.rule_id, severity: f.original?.severity, file: f.original?.file, line: f.original?.line, confidence: f.confidence })),
+            project: 'deser-lab',
+            target: aiForm.target,
+          }),
+        });
+        aiChainReport.value = await resp.json();
+        if (aiChainReport.value?.total_chains != null) aiStats.attackChains = aiChainReport.value.total_chains;
+        ElementPlus.ElMessage.success('攻击链生成完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('攻击链生成失败: ' + e.message);
+      } finally {
+        aiLoading.chain = false;
+      }
+    }
+
+    async function generatePoc() {
+      aiLoading.poc = true;
+      try {
+        const firstFinding = findingsList.value[0];
+        const ruleId = firstFinding?.original?.rule_id || 'objectinputstream';
+        const resp = await apiFetch('/api/pentest/poc/generate-single', {
+          method: 'POST',
+          body: JSON.stringify({
+            rule_id: ruleId,
+            vuln_type: 'deser-java-native',
+            target: '127.0.0.1',
+            file_path: firstFinding?.original?.file || '',
+            line: firstFinding?.original?.line || 0,
+            language: 'shell',
+          }),
+        });
+        aiPocResult.value = await resp.json();
+        aiStats.pocCount = aiPocResult.value ? 1 : 0;
+        ElementPlus.ElMessage.success('PoC生成完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('PoC生成失败: ' + e.message);
+      } finally {
+        aiLoading.poc = false;
+      }
+    }
+
+    async function runAutoVerify() {
+      aiLoading.verify = true;
+      try {
+        const resp = await apiFetch('/api/pentest/verify', {
+          method: 'POST',
+          body: JSON.stringify({
+            scan_id: aiForm.scanId || currentScanId.value,
+            findings: findingsList.value.map(f => ({ id: f.id, rule_id: f.original?.rule_id })),
+          }),
+        });
+        aiVerifyResult.value = await resp.json();
+        if (aiVerifyResult.value?.verified_count != null) aiStats.verifiedCount = aiVerifyResult.value.verified_count;
+        ElementPlus.ElMessage.success('自动验证完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('验证失败: ' + e.message);
+      } finally {
+        aiLoading.verify = false;
+      }
+    }
+
+    async function generateFixPR() {
+      try {
+        const resp = await apiFetch('/api/auto-pr/preview', {
+          method: 'POST',
+          body: JSON.stringify({
+            findings: findingsList.value.slice(0, 10).map(f => ({
+              finding_id: f.id, rule_id: f.original?.rule_id, file_path: f.original?.file,
+              line_start: f.original?.line, line_end: (f.original?.line || 0) + 2,
+              severity: f.original?.severity, language: f.original?.metadata?.language || 'java',
+              code_snippet: f.original?.code || '', category: f.original?.category || '',
+            })),
+          }),
+        });
+        const data = await resp.json();
+        aiStats.fixCount = data.total_generated || 0;
+        ElementPlus.ElMessage.success('修复预览生成完成: ' + (data.total_generated || 0) + ' 个补丁');
+      } catch (e) {
+        ElementPlus.ElMessage.error('PR预览失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 行业基准 ──
+    const industryList = ref({});
+    const industryForm = reactive({
+      industry: 'finance',
+      totalFindings: 10,
+      scanCount: 5,
+      avgRepairDays: 7,
+      complianceScore: 75,
+    });
+    const industryReport = ref(null);
+
+    async function loadIndustryList() {
+      try {
+        const resp = await apiFetch('/api/industry/list');
+        const data = await resp.json();
+        const map = {};
+        (data.industries || []).forEach(i => { map[i.industry] = i.display_name; });
+        industryList.value = map;
+      } catch (e) {
+        industryList.value = { finance: '金融', internet: '互联网', healthcare: '医疗', government: '政务' };
+      }
+    }
+
+    async function runIndustryAnalysis() {
+      try {
+        const resp = await apiFetch('/api/industry/gap-analysis', {
+          method: 'POST',
+          body: JSON.stringify({
+            enterprise: {
+              project_name: '当前项目',
+              industry: industryForm.industry,
+              total_findings: industryForm.totalFindings,
+              scan_count: industryForm.scanCount,
+              avg_repair_days: industryForm.avgRepairDays,
+              compliance_score: industryForm.complianceScore,
+              by_category: { deserialization: 3, sqli: 2, xss: 5 },
+            },
+          }),
+        });
+        industryReport.value = await resp.json();
+        ElementPlus.ElMessage.success('对标分析完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('对标分析失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 隐私协同 ──
+    const privacyForm = reactive({ rounds: 5, minParticipants: 2, standards: ['pipl', 'data_security_law'] });
+    const federateResult = ref(null);
+    const complianceReport = ref(null);
+
+    async function initFederate() {
+      try {
+        const resp = await apiFetch('/api/privacy/federate/initialize', {
+          method: 'POST',
+          body: JSON.stringify({ rounds: privacyForm.rounds, min_participants: privacyForm.minParticipants }),
+        });
+        federateResult.value = await resp.json();
+        ElementPlus.ElMessage.success('联邦训练会话已初始化');
+      } catch (e) {
+        ElementPlus.ElMessage.error('初始化失败: ' + e.message);
+      }
+    }
+
+    async function runComplianceCheck() {
+      try {
+        const resp = await apiFetch('/api/privacy/compliance/check', {
+          method: 'POST',
+          body: JSON.stringify({ standards: privacyForm.standards }),
+        });
+        complianceReport.value = await resp.json();
+        ElementPlus.ElMessage.success('合规检查完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('合规检查失败: ' + e.message);
+      }
+    }
+
+    // ── v3.1 DevSecOps ──
+    const devopsStats = reactive({ total_mappings: 0, open_tickets: 0, resolved_tickets: 0, in_progress_tickets: 0 });
+    const gateConfig = ref(null);
+
+    async function refreshDevopsStats() {
+      try {
+        const resp = await apiFetch('/api/devops/stats');
+        const data = await resp.json();
+        Object.assign(devopsStats, data);
+      } catch (e) {
+        console.warn('DevOps统计加载失败:', e);
+      }
+      try {
+        const resp = await apiFetch('/api/settings/security');
+        const data = await resp.json();
+        gateConfig.value = data.config;
+      } catch (e) {
+        gateConfig.value = { max_critical: 0, max_high: 0, max_medium: 10 };
+      }
+    }
+
+    // ── v3.1 设置 ──
+    const settingsSection = ref('system');
+    const settingsConfig = ref(null);
+
+    async function refreshSettings() {
+      try {
+        const resp = await apiFetch('/api/settings/' + settingsSection.value);
+        const data = await resp.json();
+        settingsConfig.value = data.config;
+      } catch (e) {
+        console.warn('配置加载失败:', e);
+      }
+    }
+
+    function selectSettingsSection(section) {
+      settingsSection.value = section;
+      refreshSettings();
+    }
+
+    async function loadFpStats() {
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/dashboard');
+        const data = await resp.json();
+        if (data.dashboard?.feedback_stats) {
+          Object.assign(fpStats, data.dashboard.feedback_stats);
+        }
+        if (data.dashboard?.trend_points) {
+          fpTrendData.value = data.dashboard.trend_points;
+        }
+      } catch (e) {
+        console.warn('加载FP统计失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/recommendations');
+        const data = await resp.json();
+        fpRecommendations.value = data.recommendations || [];
+      } catch (e) {
+        console.warn('加载FP建议失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/stats');
+        const data = await resp.json();
+        fpTopRules.value = data.stats?.top_fp_rules || [];
+      } catch (e) {
+        console.warn('加载FP规则失败:', e);
+      }
+
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/fp-patterns');
+        const data = await resp.json();
+        fpPatterns.value = data.patterns || [];
+      } catch (e) {
+        console.warn('加载FP模式失败:', e);
+      }
+
+      await nextTick();
+      drawFpTrendChart();
+    }
+
+    async function triggerFpOptimize() {
+      fpOptimizing.value = true;
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/optimize', {
+          method: 'POST',
+          body: JSON.stringify({ dry_run: false }),
+        });
+        const data = await resp.json();
+        ElementPlus.ElMessage.success('优化完成: ' + data.status);
+        loadFpStats();
+      } catch (e) {
+        ElementPlus.ElMessage.error('优化失败: ' + e.message);
+      } finally {
+        fpOptimizing.value = false;
+      }
+    }
+
+    async function buildFpProfile() {
+      try {
+        const resp = await apiFetch('/api/v1/fp-optimize/profile/build?project_id=default', {
+          method: 'POST',
+        });
+        const data = await resp.json();
+        ElementPlus.ElMessage.success('代码风格画像构建完成');
+      } catch (e) {
+        ElementPlus.ElMessage.error('画像构建失败: ' + e.message);
+      }
+    }
+
+    // ── 误报率趋势折线图（纯 Canvas） ──
+    function drawFpTrendChart() {
+      const canvas = document.getElementById('fp-trend-chart');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const W = 600, H = 250;
+      canvas.width = W * dpr;
+      canvas.height = H * dpr;
+      canvas.style.width = W + 'px';
+      canvas.style.height = H + 'px';
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, W, H);
+
+      const data = fpTrendData.value;
+      if (!data || data.length === 0) {
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '14px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('暂无趋势数据（积累反馈后将自动生成）', W / 2, H / 2);
+        return;
+      }
+
+      const pad = { top: 30, right: 20, bottom: 40, left: 55 };
+      const cw = W - pad.left - pad.right;
+      const ch = H - pad.top - pad.bottom;
+
+      // 计算Y轴范围
+      const rates = data.map(d => d.fp_rate || 0);
+      const maxRate = Math.max(...rates, 0.05);
+      const minRate = 0;
+
+      // 网格
+      ctx.strokeStyle = '#30363d';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 4; i++) {
+        const y = pad.top + (ch / 4) * i;
+        ctx.beginPath();
+        ctx.moveTo(pad.left, y);
+        ctx.lineTo(pad.left + cw, y);
+        ctx.stroke();
+        ctx.fillStyle = '#8b949e';
+        ctx.font = '11px sans-serif';
+        ctx.textAlign = 'right';
+        const val = (maxRate * (1 - i / 4) * 100).toFixed(1);
+        ctx.fillText(val + '%', pad.left - 5, y + 4);
+      }
+
+      // 目标线 (1%)
+      const targetY = pad.top + ch * (1 - 0.01 / maxRate);
+      if (targetY >= pad.top && targetY <= pad.top + ch) {
+        ctx.strokeStyle = '#3fb950';
+        ctx.setLineDash([5, 3]);
+        ctx.beginPath();
+        ctx.moveTo(pad.left, targetY);
+        ctx.lineTo(pad.left + cw, targetY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#3fb950';
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'left';
+        ctx.fillText('目标 1%', pad.left + cw + 2, targetY + 4);
+      }
+
+      // 折线
+      if (data.length > 1) {
+        ctx.strokeStyle = '#58a6ff';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        data.forEach((d, i) => {
+          const x = pad.left + (i / (data.length - 1)) * cw;
+          const y = pad.top + ch * (1 - (d.fp_rate || 0) / maxRate);
+          if (i === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        });
+        ctx.stroke();
+
+        // 数据点
+        ctx.fillStyle = '#58a6ff';
+        data.forEach((d, i) => {
+          const x = pad.left + (i / (data.length - 1)) * cw;
+          const y = pad.top + ch * (1 - (d.fp_rate || 0) / maxRate);
+          ctx.beginPath();
+          ctx.arc(x, y, 3, 0, Math.PI * 2);
+          ctx.fill();
+        });
+      }
+
+      // X轴标签
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      const labelStep = Math.max(1, Math.floor(data.length / 5));
+      data.forEach((d, i) => {
+        if (i % labelStep === 0 || i === data.length - 1) {
+          const x = pad.left + (i / Math.max(1, data.length - 1)) * cw;
+          const date = d.timestamp || d.date || '';
+          const short = typeof date === 'string' ? date.slice(5, 10) : '';
+          ctx.fillText(short, x, H - 10);
+        }
+      });
+    }
+
     // ── 初始化 ──
     onMounted(async () => {
       await loadStats();
@@ -608,6 +1025,53 @@ const app = createApp({
 
       // WebSocket
       wsConnected,
+
+      // FP Optimize
+      fpStats,
+      fpRecommendations,
+      fpTopRules,
+      fpPatterns,
+      fpOptimizing,
+      loadFpStats,
+      triggerFpOptimize,
+      buildFpProfile,
+
+      // AI Pentest v3.1
+      aiStats,
+      aiForm,
+      aiLoading,
+      aiChainReport,
+      aiVerifyResult,
+      aiPocResult,
+      generateAttackChain,
+      generatePoc,
+      runAutoVerify,
+      generateFixPR,
+
+      // Industry Benchmark v3.1
+      industryList,
+      industryForm,
+      industryReport,
+      loadIndustryList,
+      runIndustryAnalysis,
+
+      // Privacy v3.1
+      privacyForm,
+      federateResult,
+      complianceReport,
+      initFederate,
+      runComplianceCheck,
+
+      // DevOps v3.1
+      devopsStats,
+      gateConfig,
+      refreshDevopsStats,
+
+      // Settings v3.1
+      settingsSection,
+      settingsConfig,
+      refreshSettings,
+      selectSettingsSection,
 
       // 工具
       severityTagType,

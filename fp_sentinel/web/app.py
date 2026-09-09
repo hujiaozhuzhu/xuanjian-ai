@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 from fastapi.security import APIKeyHeader
 from pydantic import BaseModel as PydanticBaseModel
 
+from .. import __version__
 from ..models import (
     Verdict,
 )
@@ -83,7 +84,7 @@ def create_web_app(server=None) -> FastAPI:
     app = FastAPI(
         title="玄鉴 Web 仪表板",
         description="XuanJian False Positive Sentinel - Web Dashboard API",
-        version="0.1.0",
+        version=__version__,
         dependencies=[Depends(verify_api_key)] if API_KEY else [],
     )
 
@@ -251,6 +252,14 @@ def create_web_app(server=None) -> FastAPI:
                 data = await websocket.receive_text()
                 if data == "ping":
                     await websocket.send_json({"type": "pong"})
+                elif data == "get_status":
+                    scan = server._scans.get(scan_id)
+                    if scan:
+                        await websocket.send_json({
+                            "type": "status",
+                            "status": scan.get("status", "unknown"),
+                            "progress": scan.get("progress", 0),
+                        })
         except WebSocketDisconnect:
             pass
         finally:
@@ -262,7 +271,124 @@ def create_web_app(server=None) -> FastAPI:
     async def api_v1_health():
         return {
             "status": "ok",
-            "version": "0.1.0",
+            "version": __version__,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # ── FP Optimize v3.0 自适应误报引擎路由 ──
+    try:
+        from .fp_routes import create_fp_optimize_router
+        fp_router = create_fp_optimize_router()
+        app.include_router(fp_router)
+        logger.info("FP Optimize v3.0 API routes mounted at /api/v1/fp-optimize")
+    except Exception as e:
+        logger.warning("FP Optimize routes not available: %s", e)
+
+    # ── v3.1 模块路由挂载 ──
+
+    # 隐私计算 /api/privacy
+    try:
+        from ..privacy.routes import privacy_router
+        app.include_router(privacy_router)
+        logger.info("Privacy routes mounted at /api/privacy")
+    except Exception as e:
+        logger.warning("Privacy routes not available: %s", e)
+
+    # DevOps /api/devops
+    try:
+        from ..devops.routes import devops_router
+        app.include_router(devops_router)
+        logger.info("DevOps routes mounted at /api/devops")
+    except Exception as e:
+        logger.warning("DevOps routes not available: %s", e)
+
+    # 行业基准 /api/industry
+    try:
+        from ..industry_benchmark.routes import industry_router
+        app.include_router(industry_router)
+        logger.info("Industry benchmark routes mounted at /api/industry")
+    except Exception as e:
+        logger.warning("Industry routes not available: %s", e)
+
+    # 自动修复PR /api/auto-pr
+    try:
+        from ..auto_pr.routes import auto_pr_router
+        app.include_router(auto_pr_router)
+        logger.info("Auto-PR routes mounted at /api/auto-pr")
+    except Exception as e:
+        logger.warning("Auto-PR routes not available: %s", e)
+
+    # AI渗透测试 /api/pentest
+    try:
+        from ..attack.v3_ai_pentest.routes import pentest_router
+        app.include_router(pentest_router)
+        logger.info("Pentest routes mounted at /api/pentest")
+    except Exception as e:
+        logger.warning("Pentest routes not available: %s", e)
+
+    # 全局事件总线 /api/events
+    try:
+        from ..events.routes import events_router
+        app.include_router(events_router)
+        logger.info("Events routes mounted at /api/events")
+    except Exception as e:
+        logger.warning("Events routes not available: %s", e)
+
+    # 报表导出 /api/reports
+    try:
+        from ..reporting.routes import reports_router
+        app.include_router(reports_router)
+        logger.info("Reports routes mounted at /api/reports")
+    except Exception as e:
+        logger.warning("Reports routes not available: %s", e)
+
+    # 设置页面 /api/settings
+    try:
+        from .settings_routes import settings_router
+        app.include_router(settings_router)
+        logger.info("Settings routes mounted at /api/settings")
+    except Exception as e:
+        logger.warning("Settings routes not available: %s", e)
+
+    # ── v3.1 统一API索引 ──
+
+    @app.get("/api/v3.1/routes")
+    async def api_v31_routes():
+        """列出v3.1所有已注册路由"""
+        routes_info = []
+        for route in app.routes:
+            if hasattr(route, "methods") and hasattr(route, "path"):
+                routes_info.append({
+                    "path": route.path,
+                    "methods": list(route.methods),
+                    "name": getattr(route, "name", ""),
+                })
+        return {
+            "version": "3.1.0",
+            "total_routes": len(routes_info),
+            "routes": sorted(routes_info, key=lambda x: x["path"]),
+        }
+
+    @app.get("/api/v3.1/health")
+    async def api_v31_health():
+        """v3.1 综合健康检查"""
+        from ..events.event_bus import get_event_bus
+        bus = get_event_bus()
+
+        return {
+            "status": "ok",
+            "version": "3.1.0",
+            "modules": {
+                "privacy": "/api/privacy",
+                "devops": "/api/devops",
+                "industry": "/api/industry",
+                "auto_pr": "/api/auto-pr",
+                "pentest": "/api/pentest",
+                "events": "/api/events",
+                "reports": "/api/reports",
+                "settings": "/api/settings",
+            },
+            "event_bus": bus.get_stats(),
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -274,11 +400,11 @@ def create_web_app(server=None) -> FastAPI:
 
 # ─────────────────────── 独立运行入口 ───────────────────────
 
-def main():
-    """独立运行 Web 仪表板"""
+def main(host: str = "127.0.0.1", port: int = 8080):
+    """独立运行 Web 仪表板，默认仅监听本机。"""
     import uvicorn
     app = create_web_app()
-    uvicorn.run(app, host="0.0.0.0", port=8080, log_level="info")
+    uvicorn.run(app, host=host, port=port, log_level="info")
 
 
 if __name__ == "__main__":

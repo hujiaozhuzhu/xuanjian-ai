@@ -23,6 +23,12 @@ try:
 except ImportError:
     PythonScanner = None
 
+# Go 扫描器（可选 v2.3.0）
+try:
+    from .go_scanner import GoScanner
+except ImportError:
+    GoScanner = None
+
 __all__ = [
     "BaseScanner",
     "SemgrepScanner",
@@ -30,6 +36,7 @@ __all__ = [
     "FindSecBugsScanner",
     "JSScanner",
     "PythonScanner",
+    "GoScanner",
     "ScannerManager",
     "ResultNormalizer",
 ]

@@ -85,6 +85,36 @@ class TestScannerManager:
         lang = self.manager._detect_language(str(tmp_path))
         assert lang == "javascript"
 
+    @pytest.mark.parametrize(
+        ("filename", "expected"),
+        [
+            ("app.js", "javascript"),
+            ("component.JSX", "javascript"),
+            ("module.mjs", "javascript"),
+            ("module.cjs", "javascript"),
+            ("app.ts", "typescript"),
+            ("component.TSX", "typescript"),
+            ("app.py", "python"),
+            ("Main.java", "java"),
+            ("main.GO", "go"),
+        ],
+    )
+    def test_detect_language_single_file(self, tmp_path, filename, expected):
+        """按扩展名检测单个源文件，避免回退到 Java。"""
+        source = tmp_path / filename
+        source.write_text("", encoding="utf-8")
+        assert self.manager._detect_language(str(source)) == expected
+
+    def test_manager_accepts_scanner_only_config(self):
+        """CLI 传入 scanner-only 配置时仍应应用禁用项。"""
+        manager = ScannerManager({"semgrep": {"enabled": False}})
+        assert ScanTool.SEMGREP not in manager.scanners
+
+    def test_manager_accepts_app_config_shape(self):
+        """完整应用配置应被正确解包为扫描器配置。"""
+        manager = ScannerManager({"scanners": {"bandit": {"enabled": False}}})
+        assert ScanTool.BANDIT not in manager.scanners
+
     def test_select_scanners_javascript(self):
         """JavaScript扫描器选择"""
         scanners = self.manager._select_scanners("javascript")
