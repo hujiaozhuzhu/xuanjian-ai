@@ -13,6 +13,8 @@ CLI 用法::
         --sample
 """
 
+from pathlib import Path
+
 from .formats.base_generator import BaseReportGenerator, PathNotAllowedError
 
 __all__ = [
@@ -49,6 +51,38 @@ except ImportError:  # pragma: no cover
     HtmlReportGenerator = None  # type: ignore[assignment,misc]
 
 
+def _ensure_output_dir_allowed(
+    output_dir: "Path", allowed_roots: "list[str] | tuple[str, ...]"
+) -> None:
+    """在创建输出目录前执行 S7 白名单预校验（与生成器校验逻辑一致）。
+
+    Args:
+        output_dir: 待创建的输出目录（相对路径按当前工作目录解析）。
+        allowed_roots: 白名单根目录集合。
+
+    Raises:
+        PathNotAllowedError: 解析后的输出目录不在任何白名单根目录之内。
+    """
+    raw = Path(output_dir).expanduser()
+    if not raw.is_absolute():
+        raw = Path.cwd() / raw
+    resolved = raw.resolve(strict=False)
+    roots = {
+        Path(str(root)).expanduser().resolve(strict=False)
+        for root in allowed_roots
+    }
+    for root in roots:
+        try:
+            resolved.relative_to(root)
+            return
+        except ValueError:
+            continue
+    raise PathNotAllowedError(
+        f"S7 红线: 输出目录 {resolved} 不在白名单根目录 "
+        f"{sorted(str(r) for r in roots)} 之内。"
+    )
+
+
 def generate_report(
     report: object,
     output_dir: str,
@@ -68,10 +102,13 @@ def generate_report(
         RuntimeError: 对应格式生成器不可用（依赖缺失或导入失败）。
         PathNotAllowedError: 输出路径违反 S7 白名单。
     """
-    from pathlib import Path as _Path
-
-    roots = [str(_Path(output_dir).resolve())] if allowed_roots is None else list(allowed_roots)
-    out_dir = _Path(output_dir)
+    roots = (
+        [str(Path(output_dir).resolve())]
+        if allowed_roots is None
+        else list(allowed_roots)
+    )
+    out_dir = Path(output_dir)
+    _ensure_output_dir_allowed(out_dir, roots)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     registry = {

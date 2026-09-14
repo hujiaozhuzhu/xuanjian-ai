@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from pathlib import Path
@@ -237,3 +238,53 @@ class TestAttachExpAndCoverage:
         metrics = PocExpIntegrator().update_coverage(report)
         assert metrics["poc_coverage"] == 0.0
         assert metrics["exp_coverage"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# 安全红线大小写与 _consumed 归一化回归
+# ---------------------------------------------------------------------------
+
+
+class TestSafetyCaseAndConsumedNormcase:
+    """危险特征大小写绕过与 Windows 路径大小写重复消费回归。"""
+
+    def test_dangerous_pattern_uppercase_marked_danger(self) -> None:
+        """大写 "OS.SYSTEM" 同样被标记 DANGER（防大小写绕过）。"""
+        level, reasons = PocExpIntegrator.safety_check("OS.SYSTEM('ls')")
+        assert level == "DANGER"
+        assert reasons
+
+    @pytest.mark.parametrize(
+        "snippet,expected",
+        [
+            ("Subprocess.call(cmd)", "DANGER"),
+            ("RM -RF /tmp/x", "DANGER"),
+            ("java.perform(function(){})", "WARNING"),
+            ("CONSOLE.LOG('hello')", "SAFE"),
+        ],
+    )
+    def test_pattern_matching_case_insensitive(
+        self, snippet: str, expected: str
+    ) -> None:
+        """危险/警示特征匹配不区分大小写。"""
+        level, reasons = PocExpIntegrator.safety_check(snippet)
+        assert level == expected
+        if expected == "SAFE":
+            assert reasons == []
+
+    @pytest.mark.skipif(os.name != "nt", reason="仅 Windows 大小写不敏感文件系统")
+    def test_consumed_normcase_prevents_double_consume(
+        self, tmp_path: Path
+    ) -> None:
+        """同一路径不同大小写写法在 Windows 上不会重复消费脚本。"""
+        poc_dir = tmp_path / "poc"
+        poc_dir.mkdir()
+        (poc_dir / "vul-001.js").write_text(SAFE_SCRIPT, encoding="utf-8")
+        integrator = PocExpIntegrator()
+        first = integrator.attach_poc(_finding("VUL-001"), str(poc_dir))
+        assert first is not None
+        alt_dir = Path(str(poc_dir).upper())
+        if str(alt_dir) == str(poc_dir):
+            pytest.skip("路径本身无大小写差异")
+        second = integrator.attach_poc(_finding("VUL-002"), str(alt_dir))
+        assert second is None

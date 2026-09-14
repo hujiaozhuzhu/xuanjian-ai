@@ -251,3 +251,94 @@ class TestTolerance:
         assert len(report.findings) == 2
         # 文件路径加载本身不应引入额外 warning（INS-2 的容错告警除外）
         assert all("文件" not in w for w in collector.warnings)
+
+
+# ---------------------------------------------------------------------------
+# 脏数据健壮性回归（metadata / evidence / script_content）
+# ---------------------------------------------------------------------------
+
+
+class TestDirtyDataRobustness:
+    """脏 JSON 输入不崩溃回归。"""
+
+    def test_poc_metadata_non_dict_no_crash(self) -> None:
+        """poc results 的 metadata 为字符串时不崩溃并记录 warning。"""
+        collector = DataCollector()
+        report = collector.from_scan_outputs(
+            insight_json={"insights": [
+                {"id": "INS-1", "title": "t", "severity": "HIGH",
+                 "description": "d"}
+            ]},
+            poc_json={"results": [
+                {"goal": "演示", "script": "console.log(1)",
+                 "metadata": "not-a-dict", "vuln_id": None},
+            ]},
+            target_info=TARGET_INFO,
+        )
+        assert report.findings
+        assert any("metadata 不是对象" in w for w in collector.warnings)
+
+    def test_poc_metadata_dict_still_attaches(self) -> None:
+        """metadata 为合法 dict 时正常挂接（不回归）。"""
+        collector = DataCollector()
+        report = collector.from_scan_outputs(
+            insight_json={"insights": [
+                {"id": "INS-1", "title": "t", "severity": "HIGH",
+                 "description": "d"}
+            ]},
+            poc_json={"results": [
+                {"goal": "演示", "script": "console.log(1)",
+                 "metadata": {"vuln_id": "INS-1"}},
+            ]},
+            target_info=TARGET_INFO,
+        )
+        assert report.findings[0].poc is not None
+        assert report.findings[0].poc.id == "POC-INS-1"
+
+    def test_evidence_string_wrapped_as_single_evidence(self) -> None:
+        """evidence 为字符串时包装为单条证据。"""
+        collector = DataCollector()
+        report = collector.from_scan_outputs(
+            insight_json={"insights": [
+                {"id": "INS-1", "title": "t", "severity": "HIGH",
+                 "description": "d", "evidence": "Cipher.getInstance(...)"},
+            ]},
+            target_info=TARGET_INFO,
+        )
+        evidence = report.findings[0].evidence
+        assert len(evidence) == 1
+        assert evidence[0].content == "Cipher.getInstance(...)"
+
+    def test_evidence_list_non_scalar_filtered(self) -> None:
+        """evidence 列表中标量正常转 str，不因脏元素崩溃。"""
+        collector = DataCollector()
+        report = collector.from_scan_outputs(
+            insight_json={"insights": [
+                {"id": "INS-1", "title": "t", "severity": "HIGH",
+                 "description": "d", "evidence": [123, "plain"]},
+            ]},
+            target_info=TARGET_INFO,
+        )
+        evidence = report.findings[0].evidence
+        assert evidence[0].content == "123"
+        assert evidence[0].description == "d"
+
+    def test_poc_script_content_truncated_for_display(self) -> None:
+        """超长 POC 脚本全文按安全级别截断放入 PocInfo。"""
+        long_script = "console.log('safe line');\n" * 400  # > 5000 字符
+        collector = DataCollector()
+        report = collector.from_scan_outputs(
+            insight_json={"insights": [
+                {"id": "INS-1", "title": "t", "severity": "HIGH",
+                 "description": "d"}
+            ]},
+            poc_json={"results": [
+                {"goal": "长脚本", "script": long_script,
+                 "metadata": {"vuln_id": "INS-1"}},
+            ]},
+            target_info=TARGET_INFO,
+        )
+        poc = report.findings[0].poc
+        assert poc is not None
+        assert len(poc.script_content) < len(long_script)
+        assert "已截断" in poc.script_content

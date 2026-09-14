@@ -5,7 +5,10 @@
 
 1. 输出路径必须落在白名单根目录之内（解析真实路径，防符号链接与 ``..`` 穿越）；
 2. 输出文件后缀必须在允许集合内；
-3. 违规一律抛出 :class:`PathNotAllowedError`，绝不静默降级为其他路径。
+3. 违规一律抛出 :class:`PathNotAllowedError`，绝不静默降级为其他路径；
+4. 创建父目录后、写入文件前，对父目录重新解析真实路径并再次校验
+   白名单（写前二次校验，收窄 TOCTOU 竞争窗口）。残余风险：校验与
+   写入之间仍存在无法完全消除的竞争窗口，需配合受控运行环境使用。
 """
 
 from __future__ import annotations
@@ -106,7 +109,11 @@ class BaseReportGenerator(ABC):
         - 相对路径先按当前工作目录解析，再取真实路径（穿透符号链接）；
         - 真实路径必须位于某个白名单根目录之下（``..`` 穿越失效）；
         - 文件后缀必须在允许集合内；
-        - 通过后自动创建父目录。
+        - 通过后自动创建父目录；
+        - 创建父目录后、写入前，重新解析父目录真实路径并二次校验
+          白名单（防 TOCTOU：初次校验后父目录可能被符号链接等重定向。
+          残余风险：二次校验与实际写入之间仍存在竞争窗口，无法完全
+          消除，需配合受控运行环境使用）。
 
         Args:
             path: 待校验的输出路径。
@@ -153,6 +160,25 @@ class BaseReportGenerator(ABC):
             )
 
         resolved.parent.mkdir(parents=True, exist_ok=True)
+
+        # 写前二次校验（防 TOCTOU）：父目录可能在首次校验后被符号链接
+        # 等手段重定向到白名单之外，写入前重新解析并再次校验。
+        try:
+            parent_real = resolved.parent.resolve(strict=False)
+        except OSError as exc:
+            raise PathNotAllowedError(
+                f"S7 红线: 输出路径父目录无法解析: {resolved.parent} ({exc})"
+            ) from exc
+        parent_inside = any(
+            self._is_relative_to(parent_real, root)
+            for root in self._allowed_roots
+        )
+        if not parent_inside:
+            raise PathNotAllowedError(
+                f"S7 红线（写前二次校验）: 输出路径父目录 {parent_real} "
+                f"不在白名单根目录 "
+                f"{sorted(str(r) for r in self._allowed_roots)} 之内。"
+            )
         return resolved
 
     @staticmethod

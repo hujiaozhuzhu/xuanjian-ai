@@ -522,6 +522,9 @@ class WordGenerator(BaseReportGenerator):
         rows: List[List[str]] = []
         for severity in _SEVERITY_ORDER:
             rows.append([severity, str(counts.get(severity, 0))])
+        unknown = counts.get("未知", 0)
+        if unknown:
+            rows.append(["未知", str(unknown)])
         rows.append(["合计", str(len(findings))])
         table = _add_table(doc, ["严重程度", "数量"], rows)
         for row_idx, severity in enumerate(_SEVERITY_ORDER, start=1):
@@ -533,7 +536,7 @@ class WordGenerator(BaseReportGenerator):
             for idx, vuln in enumerate(top_findings, start=1):
                 severity = str(
                     get_attr(vuln, "severity", "INFO") or "INFO"
-                ).upper()
+                ).strip().upper()
                 vuln_id = str(get_attr(vuln, "vuln_id", "") or "N/A")
                 title = str(get_attr(vuln, "title", "") or "未命名漏洞")
                 doc.add_paragraph(
@@ -557,7 +560,9 @@ class WordGenerator(BaseReportGenerator):
         """构建单个漏洞的详细分析小节。"""
         vuln_id = str(get_attr(vuln, "vuln_id", "") or f"FINDING-{index:03d}")
         title = str(get_attr(vuln, "title", "") or "未命名漏洞")
-        severity = str(get_attr(vuln, "severity", "INFO") or "INFO").upper()
+        severity = str(
+            get_attr(vuln, "severity", "INFO") or "INFO"
+        ).strip().upper()
 
         doc.add_heading(f"3.{index} {vuln_id} {title}", level=2)
 
@@ -597,6 +602,12 @@ class WordGenerator(BaseReportGenerator):
             _add_placeholder(doc, "无固定化证据。")
             return
         for seq, item in enumerate(evidence, start=1):
+            if isinstance(item, str):
+                # 字符串证据：视作代码内容处理（与 Excel/HTML 兼容逻辑对齐）
+                doc.add_paragraph(f"证据 {seq} 位置：未知位置")
+                if item.strip():
+                    _add_code_block(doc, item)
+                continue
             location = str(get_attr(item, "location", "") or "未知位置")
             content = str(get_attr(item, "content", "") or "")
             description = str(get_attr(item, "description", "") or "")
@@ -789,13 +800,16 @@ class WordGenerator(BaseReportGenerator):
 
     @staticmethod
     def _severity_counts(findings: List[Any]) -> Dict[str, int]:
-        """统计各严重度数量。"""
-        counts: Dict[str, int] = {name: 0 for name in _SEVERITY_ORDER}
+        """统计各严重度数量；未知/脏值计入“未知”列而非崩溃。"""
+        counts: Dict[str, int] = {
+            name: 0 for name in (*_SEVERITY_ORDER, "未知")
+        }
         for item in findings:
             severity = str(
                 get_attr(item, "severity", "INFO") or "INFO"
-            ).upper()
-            counts[severity] = counts.get(severity, 0) + 1
+            ).strip().upper()
+            key = severity if severity in _SEVERITY_ORDER else "未知"
+            counts[key] = counts.get(key, 0) + 1
         return counts
 
     @staticmethod
@@ -805,7 +819,10 @@ class WordGenerator(BaseReportGenerator):
         return sorted(
             findings,
             key=lambda item: rank.get(
-                str(get_attr(item, "severity", "INFO") or "INFO").upper(), 99
+                str(
+                    get_attr(item, "severity", "INFO") or "INFO"
+                ).strip().upper(),
+                99,
             ),
         )
 
@@ -825,10 +842,15 @@ class WordGenerator(BaseReportGenerator):
     # ────────────────────────── 生成后自检 ──────────────────────────
 
     def _self_check(self, target: Path) -> None:
-        """重新打开产物校验段落数与 Heading1 章节数。
+        """重新打开产物进行结构性校验（章节 / 表格 / 正文段落）。
+
+        空 findings 的合法报告段落数约 33（封面/目录/概述/摘要/附录等
+        固定章节构成，表格内段落不计入 ``doc.paragraphs``），因此以下
+        结构性下限对空报告同样成立，不再依赖写死的段落总数阈值。
 
         Raises:
-            ReportGenerationError: 段落数不超过 50 或 Heading1 数量不为 6。
+            ReportGenerationError: 6 个 Heading1 不齐全、无任何表格或
+                正文段落数不足 10（结构性异常）。
         """
         try:
             doc = Document(str(target))
@@ -840,12 +862,17 @@ class WordGenerator(BaseReportGenerator):
         h1_texts = [
             p.text for p in doc.paragraphs if p.style.name == "Heading 1"
         ]
-        if paragraph_count <= 50 or len(h1_texts) != 6:
+        table_count = len(doc.tables)
+        if len(h1_texts) != 6 or table_count < 1 or paragraph_count < 10:
             raise ReportGenerationError(
-                "自检失败：段落构成不符合预期，"
-                f"段落数={paragraph_count}（应>50），"
-                f"Heading1数量={len(h1_texts)}（应为6）：{h1_texts}"
+                "自检失败：文档结构不符合预期，"
+                f"Heading1数量={len(h1_texts)}（应为6），"
+                f"表格数={table_count}（应>=1），"
+                f"段落数={paragraph_count}（应>=10）：{h1_texts}"
             )
         logger.debug(
-            "自检通过: 段落数=%d, Heading1=%s", paragraph_count, h1_texts
+            "自检通过: 段落数=%d, 表格数=%d, Heading1=%s",
+            paragraph_count,
+            table_count,
+            h1_texts,
         )

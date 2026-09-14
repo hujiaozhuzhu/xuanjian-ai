@@ -374,3 +374,70 @@ class TestParsingHelpers:
             + b"\xff\xd9"
         )
         assert ScreenshotManager.parse_dimensions(data) == (width, height)
+
+
+class TestStreamingHashAndSizeLimit:
+    """流式哈希、单文件大小上限与登记哈希复用回归。"""
+
+    def test_validate_oversized_file_fails_with_reason(
+        self, manager: ScreenshotManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """超过大小上限的截图判定失败且原因明确。"""
+        import fp_sentinel.mobile_reporting.core.screenshot_manager as sm
+
+        path = tmp_path / "big.png"
+        path.write_bytes(make_png())
+        monkeypatch.setattr(sm, "MAX_SCREENSHOT_BYTES", 10)
+        ref = manager.validate_screenshot(ScreenshotRef(id="S1", path=str(path)))
+        assert not ref.verified
+        assert "大小上限" in ref.verify_message
+        assert "字节" in ref.verify_message
+
+    def test_register_oversized_file_skips_hash(
+        self, manager: ScreenshotManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """登记超限文件时不计算哈希并写明原因。"""
+        import fp_sentinel.mobile_reporting.core.screenshot_manager as sm
+
+        path = tmp_path / "big.png"
+        path.write_bytes(make_png())
+        monkeypatch.setattr(sm, "MAX_SCREENSHOT_BYTES", 10)
+        ref = manager.register_screenshot(str(path), "超限", "VUL-001")
+        assert ref.sha256 == ""
+        assert "大小上限" in ref.verify_message
+
+    def test_validate_reuses_registered_hash(
+        self, manager: ScreenshotManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """size/mtime 未变时校验复用登记哈希，不重复计算。"""
+        path = tmp_path / "ok.png"
+        path.write_bytes(make_png())
+        ref = manager.register_screenshot(str(path), "复用", "VUL-001")
+        assert ref.sha256
+
+        def _boom(_path: Path) -> str:
+            raise AssertionError("不应重复计算 SHA256")
+
+        monkeypatch.setattr(ScreenshotManager, "_stream_sha256", staticmethod(_boom))
+        ref = manager.validate_screenshot(ref)
+        assert ref.verified, ref.verify_message
+
+    def test_tamper_same_size_still_recomputes(
+        self, manager: ScreenshotManager, tmp_path: Path
+    ) -> None:
+        """同尺寸篡改（mtime 变化）时仍重算哈希并检出不匹配。"""
+        import os
+
+        path = tmp_path / "same_size.png"
+        original = bytearray(make_png(width=100, height=80))
+        original[-16] ^= 0xFF  # 翻转 IDAT 区域字节，保持文件长度不变
+        path.write_bytes(bytes(original))
+        os.utime(path, (1000000000, 1000000000))
+        ref = manager.register_screenshot(str(path), "原始", "VUL-001")
+        tampered = bytearray(make_png(width=100, height=80))
+        tampered[-17] ^= 0xFF  # 与原始翻转的字节不同，同尺寸不同内容
+        path.write_bytes(bytes(tampered))
+        os.utime(path, (2000000000, 2000000000))
+        ref = manager.validate_screenshot(ref)
+        assert not ref.verified
+        assert "SHA256 不匹配" in ref.verify_message

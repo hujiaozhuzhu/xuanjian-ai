@@ -15,9 +15,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import struct
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..models.report_models import MobileSecurityReport, ScreenshotRef
 
@@ -29,7 +30,12 @@ except ImportError:  # pragma: no cover - 取决于运行环境
     Image = None  # type: ignore[assignment]
     _PIL_AVAILABLE = False
 
-__all__ = ["ScreenshotManager", "PNG_SIGNATURE", "JPEG_SIGNATURE"]
+__all__ = [
+    "ScreenshotManager",
+    "PNG_SIGNATURE",
+    "JPEG_SIGNATURE",
+    "MAX_SCREENSHOT_BYTES",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,14 @@ _PNG_IEND_CHUNK = b"IEND"
 _JPEG_EOI = b"\xff\xd9"
 #: 尺寸合理性下限（宽高均不得小于该值）
 MIN_DIMENSION = 10
+#: 单张截图文件大小上限（字节），超过则登记/校验失败，防止内存耗尽
+MAX_SCREENSHOT_BYTES = 200 * 1024 * 1024
+#: 流式哈希的读取块大小（1MB）
+_CHUNK_SIZE = 1024 * 1024
+#: 登记与校验时读取的头部字节数（嗅探魔数与解析宽高所需）
+_HEAD_BYTES = 1024 * 1024
+#: 校验时读取的尾部字节数（PNG IEND / JPEG EOI 检查所需）
+_TAIL_BYTES = 12
 #: JPEG SOF 帧标记集合（携带图像尺寸信息；排除 DHT/H 函数/JPG 扩展）
 _JPEG_SOF_MARKERS = frozenset(
     {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
@@ -59,6 +73,8 @@ class ScreenshotManager:
     def __init__(self, min_dimension: int = MIN_DIMENSION) -> None:
         self._min_dimension = max(1, int(min_dimension))
         self._seq = 0
+        #: path -> (size, mtime_ns, sha256) 登记时快照，供校验阶段复用哈希
+        self._sha_cache: Dict[str, Tuple[int, int, str]] = {}
 
     # ─────────────────────────── 登记 ────────────────────────────
 
@@ -93,19 +109,39 @@ class ScreenshotManager:
             logger.warning("截图登记失败（文件不存在）: %s", path)
             return ref
         try:
-            data = file_path.read_bytes()
+            stat = file_path.stat()
+        except OSError as exc:
+            ref.verify_message = f"登记时文件状态不可读: {exc}"
+            logger.warning("截图登记失败（stat 失败）: %s (%s)", path, exc)
+            return ref
+        if stat.st_size > MAX_SCREENSHOT_BYTES:
+            ref.verify_message = (
+                f"登记时文件超过大小上限 {MAX_SCREENSHOT_BYTES} 字节"
+                f"（实际 {stat.st_size} 字节），未计算哈希"
+            )
+            logger.warning("截图登记失败（超出大小上限）: %s", ref.verify_message)
+            return ref
+        try:
+            head = self._read_head(file_path)
+            ref.sha256 = self._stream_sha256(file_path)
         except OSError as exc:
             ref.verify_message = f"登记时文件不可读: {exc}"
             logger.warning("截图登记失败（不可读）: %s (%s)", path, exc)
             return ref
-        ref.sha256 = hashlib.sha256(data).hexdigest()
-        fmt = self.sniff_format(data)
+        fmt = self.sniff_format(head)
         ref.format = fmt
-        size = self.parse_dimensions(data)
+        size = self.parse_dimensions(head)
         if size is not None:
             ref.width, ref.height = size
+        self._sha_cache[str(file_path)] = (
+            stat.st_size,
+            stat.st_mtime_ns,
+            ref.sha256,
+        )
         ref.verify_message = "已登记，尚未通过完整校验"
-        logger.debug("截图已登记: %s (%s, %dx%d)", ref_id, path, ref.width, ref.height)
+        logger.debug(
+            "截图已登记: %s (%s, %dx%d)", ref_id, path, ref.width, ref.height
+        )
         return ref
 
     # ─────────────────────────── 单张校验 ────────────────────────
@@ -114,8 +150,10 @@ class ScreenshotManager:
         """对单张截图执行完整性与真实性校验。
 
         校验项（任一失败即 verified=False，全部原因汇总到 verify_message）：
-        文件存在、可读、非空、魔数正确、格式与登记值一致、
+        文件存在、可读、非空、不超大小上限、魔数正确、格式与登记值一致、
         无截断、尺寸可解析且不低于最小合理值、SHA256 与登记值一致。
+
+        文件仅读取头部与尾部片段（哈希流式分块计算），不全量载入内存。
 
         Args:
             ref: 待校验的截图引用（原地更新 verified/verify_message 等字段）。
@@ -131,19 +169,35 @@ class ScreenshotManager:
             logger.warning("截图校验失败: %s", ref.verify_message)
             return ref
         try:
-            data = file_path.read_bytes()
+            stat = file_path.stat()
+        except OSError as exc:
+            ref.verified = False
+            ref.verify_message = f"文件状态不可读: {exc}"
+            logger.warning("截图校验失败: %s", ref.verify_message)
+            return ref
+        if stat.st_size == 0:
+            ref.verified = False
+            ref.verify_message = "文件为空"
+            logger.warning("截图校验失败: %s (%s)", ref.path, ref.verify_message)
+            return ref
+        if stat.st_size > MAX_SCREENSHOT_BYTES:
+            ref.verified = False
+            ref.verify_message = (
+                f"文件超过大小上限 {MAX_SCREENSHOT_BYTES} 字节"
+                f"（实际 {stat.st_size} 字节），拒绝读取"
+            )
+            logger.warning("截图校验失败 %s: %s", ref.id, ref.verify_message)
+            return ref
+        try:
+            head = self._read_head(file_path)
+            tail = self._read_tail(file_path)
         except OSError as exc:
             ref.verified = False
             ref.verify_message = f"文件不可读: {exc}"
             logger.warning("截图校验失败: %s", ref.verify_message)
             return ref
-        if not data:
-            ref.verified = False
-            ref.verify_message = "文件为空"
-            logger.warning("截图校验失败: %s (%s)", ref.path, ref.verify_message)
-            return ref
 
-        fmt = self.sniff_format(data)
+        fmt = self.sniff_format(head)
         if fmt is None:
             reasons.append(
                 "魔数错误: 文件既非合法 PNG 也非合法 JPEG 头部"
@@ -154,10 +208,10 @@ class ScreenshotManager:
                     f"格式不一致: 登记为 {ref.format!r}，实际为 {fmt!r}"
                 )
             ref.format = fmt
-            if self.detect_truncation(data, fmt):
-                tail = "IEND" if fmt == "png" else "EOI"
-                reasons.append(f"文件疑似截断: 未找到 {tail} 结束标记")
-            size = self.parse_dimensions(data)
+            if self._is_truncated(head, tail, stat.st_size, fmt):
+                tail_mark = "IEND" if fmt == "png" else "EOI"
+                reasons.append(f"文件疑似截断: 未找到 {tail_mark} 结束标记")
+            size = self.parse_dimensions(head)
             if size is None:
                 reasons.append("无法从文件头解析宽高（文件可能损坏）")
             else:
@@ -171,7 +225,13 @@ class ScreenshotManager:
                 if _PIL_AVAILABLE and Image is not None:
                     reasons.extend(self._pil_cross_check(file_path, width, height))
 
-        actual_sha = hashlib.sha256(data).hexdigest()
+        try:
+            actual_sha = self._resolve_sha256(file_path, stat, ref)
+        except OSError as exc:
+            ref.verified = False
+            ref.verify_message = f"哈希计算失败（文件不可读）: {exc}"
+            logger.warning("截图校验失败 %s: %s", ref.id, ref.verify_message)
+            return ref
         if ref.sha256 and ref.sha256.lower() != actual_sha:
             reasons.append(
                 f"SHA256 不匹配（文件可能被篡改）: "
@@ -194,6 +254,71 @@ class ScreenshotManager:
         else:
             logger.warning("截图校验失败 %s: %s", ref.id, ref.verify_message)
         return ref
+
+    # ─────────────────────── 流式读取与哈希 ────────────────────
+
+    @staticmethod
+    def _stream_sha256(path: Path) -> str:
+        """按 1MB 分块流式计算文件 SHA256，不全量载入内存。"""
+        digest = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(_CHUNK_SIZE), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    @staticmethod
+    def _read_head(path: Path) -> bytes:
+        """读取文件头部片段（嗅探与宽高解析所需）。"""
+        with path.open("rb") as fh:
+            return fh.read(_HEAD_BYTES)
+
+    @staticmethod
+    def _read_tail(path: Path) -> bytes:
+        """读取文件尾部片段（PNG IEND / JPEG EOI 检查所需）。"""
+        with path.open("rb") as fh:
+            fh.seek(0, 2)
+            file_size = fh.tell()
+            fh.seek(max(0, file_size - _TAIL_BYTES))
+            return fh.read(_TAIL_BYTES)
+
+    def _is_truncated(
+        self, head: bytes, tail: bytes, file_size: int, fmt: str
+    ) -> bool:
+        """基于头/尾片段判断文件是否截断（兼容小文件全量路径）。"""
+        if file_size <= len(head):
+            return self.detect_truncation(head, fmt)
+        if fmt == "png":
+            return not (
+                len(tail) == _TAIL_BYTES
+                and tail[-12:-8] == b"\x00\x00\x00\x00"
+                and tail[-8:-4] == b"IEND"
+            )
+        if fmt == "jpeg":
+            return _JPEG_EOI not in tail
+        return True
+
+    def _resolve_sha256(
+        self, file_path: Path, stat: os.stat_result, ref: ScreenshotRef
+    ) -> str:
+        """计算（或复用登记时的）SHA256，并同步内部快照缓存。
+
+        登记时记录了 size/mtime 快照：校验时若 ref.sha256 非空且文件
+        size+mtime 未变，则直接复用，避免重复哈希。
+        """
+        key = str(file_path)
+        cached = self._sha_cache.get(key)
+        if (
+            ref.sha256
+            and cached is not None
+            and cached[0] == stat.st_size
+            and cached[1] == stat.st_mtime_ns
+            and cached[2] == ref.sha256
+        ):
+            logger.debug("截图 %s 复用登记哈希（size/mtime 未变）", ref.id)
+            return ref.sha256
+        actual = self._stream_sha256(file_path)
+        self._sha_cache[key] = (stat.st_size, stat.st_mtime_ns, actual)
+        return actual
 
     # ─────────────────────────── 报告级校验 ──────────────────────
 

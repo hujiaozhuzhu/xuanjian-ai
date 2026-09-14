@@ -16,6 +16,7 @@ import hashlib
 import importlib.metadata
 import logging
 import platform
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -201,11 +202,13 @@ class ReproducibilityManager:
             "",
             'echo "[1/3] 环境校验"',
             "python3 --version",
-            'TARGET_FILE="${TARGET_FILE:-' + (target.name if target else "target.apk") + '}"',
+            'TARGET_FILE="${TARGET_FILE:-'
+            + self._escape_dq(target.name if target else "target.apk")
+            + '}"',
         ]
         if expected_sha:
             lines += [
-                'EXPECTED_SHA256="' + expected_sha + '"',
+                'EXPECTED_SHA256="' + self._escape_dq(expected_sha) + '"',
                 'ACTUAL_SHA256="$(sha256sum "${TARGET_FILE}" | awk \'{print $1}\')"',
                 'if [ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]; then',
                 '  echo "[FAIL] 目标文件 SHA256 不匹配: ${ACTUAL_SHA256}" && exit 2',
@@ -214,12 +217,15 @@ class ReproducibilityManager:
             ]
         lines += ["", 'echo "[2/3] 复现扫描"']
         if scan_command:
-            lines.append(self._bash_cmd(scan_command))
+            lines.extend(self._bash_cmd(scan_command))
         for finding in report.findings:
-            lines.append(f'echo "--- {finding.id}: {finding.title} [{finding.severity}] ---"')
+            header = self._escape_dq(
+                f"--- {finding.id}: {finding.title} [{finding.severity}] ---"
+            )
+            lines.append(f'echo "{header}"')
             for step in finding.repro_steps:
                 if step.command:
-                    lines.append(self._bash_cmd(step.command))
+                    lines.extend(self._bash_cmd(step.command))
                 if step.expected_result:
                     lines.append(
                         f'echo "[CHECK] 预期: {self._escape_dq(step.expected_result)}"'
@@ -244,12 +250,12 @@ class ReproducibilityManager:
             "python --version",
             "$targetFile = $env:TARGET_FILE",
             "if (-not $targetFile) { $targetFile = '"
-            + (target.name if target else "target.apk")
+            + self._escape_sq(target.name if target else "target.apk")
             + "' }",
         ]
         if expected_sha:
             lines += [
-                f"$expectedSha256 = '{expected_sha}'",
+                f"$expectedSha256 = '{self._escape_sq(expected_sha)}'",
                 "$actualSha256 = (Get-FileHash -Algorithm SHA256 $targetFile).Hash.ToLower()",
                 "if ($actualSha256 -ne $expectedSha256) {",
                 '  Write-Host "[FAIL] 目标文件 SHA256 不匹配: $actualSha256"; exit 2',
@@ -260,32 +266,64 @@ class ReproducibilityManager:
         if scan_command:
             lines.append(self._ps1_cmd(scan_command))
         for finding in report.findings:
-            title = self._escape_sq(finding.title)
-            lines.append(
-                f'Write-Host "--- {finding.id}: {title} [{finding.severity}] ---"'
+            header = self._escape_sq(
+                f"--- {finding.id}: {finding.title} [{finding.severity}] ---"
             )
+            lines.append(f"Write-Host '{header}'")
             for step in finding.repro_steps:
                 if step.command:
                     lines.append(self._ps1_cmd(step.command))
                 if step.expected_result:
                     expected = self._escape_sq(step.expected_result)
-                    lines.append(f'Write-Host "[CHECK] 预期: {expected}"')
+                    lines.append(f"Write-Host '[CHECK] 预期: {expected}'")
         lines += ["", 'Write-Host "[3/3] 复现完成，请人工核对上述 [CHECK] 校验点"']
         return lines
 
+    #: shell 元字符/危险特征：命中即禁用自动执行（安全红线，与 POC 模块一致）
+    _DANGEROUS_CMD_RE = re.compile(
+        r"[;&|`]|\$\(|\$\{|\$\w|\brm\s+-rf\b|\n|\r",
+        re.IGNORECASE,
+    )
+
     @staticmethod
-    def _bash_cmd(command: str) -> str:
-        """把扫描命令包装为 DRY-RUN 安全的 bash 行。"""
-        safe = command.replace('"', '\\"')
-        return (
-            f'if [ "${{RUN_SCAN:-0}}" = "1" ]; then {safe}; '
-            f'else echo "[DRY-RUN] {safe}"; fi'
-        )
+    def _bash_cmd(command: str) -> List[str]:
+        """把扫描命令包装为 DRY-RUN 安全的 bash 行（多行 if/else 块）。
+
+        安全红线：命令来自扫描产物（外部可控）。含 shell 元字符或危险
+        特征（命令替换、管道、分号、``rm -rf`` 等）的命令一律禁用
+        自动执行，仅输出转义预览与人工审核提示；只有不含任何元字符
+        的干净命令才允许在 ``RUN_SCAN=1`` 时原样执行。
+        """
+        safe = ReproducibilityManager._escape_dq(command)
+        if ReproducibilityManager._DANGEROUS_CMD_RE.search(command):
+            return [
+                "# [安全红线] 命令含危险特征（shell 元字符/rm -rf 等），",
+                "# 已禁用自动执行，请人工审核后手动运行：",
+                f"#   {safe}",
+                'echo "[SKIP-DANGER] 该命令未自动执行，请人工审核"',
+            ]
+        return [
+            'if [ "${RUN_SCAN:-0}" = "1" ]; then',
+            command,
+            "else",
+            f'  echo "[DRY-RUN] {safe}"',
+            "fi",
+        ]
 
     @staticmethod
     def _ps1_cmd(command: str) -> str:
-        """把扫描命令包装为 DRY-RUN 安全的 PowerShell 行。"""
+        """把扫描命令包装为 DRY-RUN 安全的 PowerShell 行。
+
+        与 bash 侧一致：含危险特征的命令禁用 ``Invoke-Expression``，
+        仅输出预览与人工审核提示。
+        """
         safe = command.replace("'", "''")
+        if ReproducibilityManager._DANGEROUS_CMD_RE.search(command):
+            return (
+                "# [安全红线] 命令含危险特征，已禁用自动执行，请人工审核： "
+                + safe
+                + " ; Write-Host '[SKIP-DANGER] 该命令未自动执行，请人工审核'"
+            )
         return (
             "if ($env:RUN_SCAN -eq '1') { Invoke-Expression '" + safe + "' } "
             "else { Write-Host '[DRY-RUN] " + safe + "' }"
@@ -293,8 +331,19 @@ class ReproducibilityManager:
 
     @staticmethod
     def _escape_dq(text: str) -> str:
-        """转义 bash 双引号字符串中的特殊字符。"""
-        return text.replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        """转义 bash 双引号字符串中的特殊字符。
+
+        先转义反斜杠，再处理反引号 / ``$`` / 双引号，换行与回车
+        改写为字面量，防止命令替换、变量展开与引号逃逸。
+        """
+        return (
+            text.replace("\\", "\\\\")
+            .replace("`", "\\`")
+            .replace("$", "\\$")
+            .replace('"', '\\"')
+            .replace("\r", "\\r")
+            .replace("\n", "\\n")
+        )
 
     @staticmethod
     def _escape_sq(text: str) -> str:

@@ -21,9 +21,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import logging
+import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from .base_generator import BaseReportGenerator
 from ._fallback_models import get_attr
@@ -97,6 +98,10 @@ class HtmlGenerator(BaseReportGenerator):
         allowed_roots: S7 输出路径白名单根目录集合。
         allowed_suffixes: 允许的输出后缀；默认仅 ``.html``。
         screenshot_base_dir: 截图相对路径的解析基准目录（可选）。
+        evidence_roots: 截图证据路径白名单根目录集合（安全红线）。
+            截图解析出的真实路径必须位于任一根目录之内才允许读取并
+            base64 嵌入，防止磁盘任意文件读取外带；默认仅允许当前
+            工作目录（``Path.cwd()``）。
     """
 
     DEFAULT_ALLOWED_SUFFIXES = frozenset({".html"})
@@ -106,6 +111,7 @@ class HtmlGenerator(BaseReportGenerator):
         allowed_roots: Optional[List[Union[str, Path]]] = None,
         allowed_suffixes: Optional[List[str]] = None,
         screenshot_base_dir: Optional[Union[str, Path]] = None,
+        evidence_roots: Optional[Sequence[Union[str, Path]]] = None,
     ) -> None:
         super().__init__(
             allowed_roots=allowed_roots, allowed_suffixes=allowed_suffixes
@@ -117,6 +123,19 @@ class HtmlGenerator(BaseReportGenerator):
                 .expanduser()
                 .resolve(strict=False)
             )
+        roots = (
+            [Path(r) for r in evidence_roots]
+            if evidence_roots is not None
+            else [Path.cwd()]
+        )
+        if not roots:
+            roots = [Path.cwd()]
+        self._evidence_roots: List[Path] = [
+            r.expanduser().resolve(strict=False) for r in roots
+        ]
+        # 本轮生成中成功嵌入 / 被白名单拦截的截图计数
+        self._embedded_count = 0
+        self._blocked_count = 0
 
     def get_format_name(self) -> str:
         """返回格式名称。"""
@@ -141,12 +160,20 @@ class HtmlGenerator(BaseReportGenerator):
             ReportGenerationError: 生成后自检失败。
         """
         resolved = self.validate_output_path(output_path)
+        # 每轮生成前重置截图嵌入/拦截计数器
+        self._embedded_count = 0
+        self._blocked_count = 0
         findings = self._collect_findings(report, resolved.parent)
         html_str = self._render_report(report, findings)
         self._self_check(html_str, findings)
         resolved.write_text(html_str, encoding="utf-8")
         logger.info(
-            "HTML 报告已生成: %s (%d findings)", resolved, len(findings)
+            "HTML 报告已生成: %s (%d findings, 嵌入截图 %d 张，"
+            "拦截白名单外截图 %d 张)",
+            resolved,
+            len(findings),
+            self._embedded_count,
+            self._blocked_count,
         )
         return resolved
 
@@ -553,6 +580,14 @@ class HtmlGenerator(BaseReportGenerator):
         if path is None:
             result["reason"] = f"文件不存在: {path_str}"
             return result
+        if not self._is_evidence_path_allowed(path):
+            # 安全红线：截图不在证据白名单内，拒绝读取，仅渲染占位框
+            self._blocked_count += 1
+            logger.warning(
+                "截图路径不在证据白名单内，拒绝嵌入: %s", path
+            )
+            result["reason"] = "路径不在证据白名单"
+            return result
         try:
             data = path.read_bytes()
         except OSError as exc:
@@ -574,6 +609,7 @@ class HtmlGenerator(BaseReportGenerator):
                 "sha16": sha[:16],
             }
         )
+        self._embedded_count += 1
         if len(data) > _OVERSIZE_LIMIT_BYTES:
             result["oversize"] = True
             result["size_mb"] = round(len(data) / (1024 * 1024), 1)
@@ -614,6 +650,34 @@ class HtmlGenerator(BaseReportGenerator):
                 return cand
         return None
 
+    def _is_evidence_path_allowed(self, path: Path) -> bool:
+        """校验截图真实路径是否位于任一证据白名单根目录之内。"""
+        try:
+            resolved = path.resolve(strict=False)
+        except (OSError, ValueError):
+            return False
+        return any(
+            self._is_within(resolved, root)
+            for root in self._evidence_roots
+        )
+
+    @staticmethod
+    def _is_within(child: Path, parent: Path) -> bool:
+        """判断 ``child`` 是否位于 ``parent`` 之下（含相等）。
+
+        兼容 Windows 文件系统大小写不敏感语义：``relative_to`` 失败时
+        回退为小写化后的字符串前缀比较。
+        """
+        try:
+            child.relative_to(parent)
+            return True
+        except ValueError:
+            pass
+        parent_l = str(parent).lower()
+        if not parent_l.endswith(os.sep):
+            parent_l += os.sep
+        return str(child).lower().startswith(parent_l)
+
     @staticmethod
     def _sniff_mime(data: bytes) -> Optional[str]:
         """按魔数识别 PNG / JPEG，其他格式返回 ``None``。"""
@@ -625,11 +689,17 @@ class HtmlGenerator(BaseReportGenerator):
 
     # ────────────────────────── 生成后自检 ─────────────────────────
 
-    @staticmethod
     def _self_check(
-        html_str: str, findings: List[Dict[str, Any]]
+        self,
+        html_str: str,
+        findings: List[Dict[str, Any]],
     ) -> None:
         """自检：DOCTYPE、finding 锚点、内嵌 base64 图片数量。
+
+        内嵌数量以 :attr:`_embedded_count`（嵌入成功时自增的实例计数器）
+        为准，不再从 HTML 文本统计期望值，避免用户证据文本中恰好含有
+        ``data:image/`` 字样导致的误判；实际出现次数不少于期望次数即
+        视为通过（多出的次数可能来自用户文本，属正常现象）。
 
         Raises:
             ReportGenerationError: 任一断言不满足。
@@ -641,17 +711,12 @@ class HtmlGenerator(BaseReportGenerator):
             anchor = str(f.get("anchor", ""))
             if anchor and f'id="{anchor}"' not in html_str:
                 problems.append(f"缺少 finding 锚点: {anchor}")
-        embedded = sum(
-            1
-            for f in findings
-            for s in f.get("screenshots", [])
-            if s.get("state") == "ok"
-        )
+        expected = self._embedded_count * 2
         actual = html_str.count("data:image/")
         # 每张截图 data URI 出现两次（缩略图 src 与灯箱 data-full）
-        if actual != embedded * 2:
+        if actual < expected:
             problems.append(
-                f"内嵌 base64 图片数量不符: 期望 {embedded * 2}, "
+                f"内嵌 base64 图片数量不符: 期望至少 {expected}, "
                 f"实际 {actual}"
             )
         if problems:

@@ -41,6 +41,7 @@ except ImportError:  # pragma: no cover - 模型包由其他 Agent 并行开发
 
 try:
     from openpyxl import Workbook, load_workbook
+    from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
     from openpyxl.worksheet.worksheet import Worksheet
 
@@ -106,6 +107,10 @@ GLOSSARY: List[Tuple[str, str]] = [
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 _MONO_FONT = "Consolas"
 
+#: 单元格文本兜底截断阈值（openpyxl 硬上限为 32767 字符）
+_MAX_CELL_CHARS = 32000
+_TRUNCATE_SUFFIX = "…[已截断]"
+
 _THIN = Side(style="thin", color="BFBFBF")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _HEADER_FILL = PatternFill("solid", fgColor="1F4E79")
@@ -117,6 +122,47 @@ _CODE_FILL = PatternFill("solid", fgColor="F2F2F2")
 
 class ReportGenerationError(RuntimeError):
     """报告生成或生成后自检失败。"""
+
+
+def _sanitize(text: Any) -> Any:
+    """清洗写入单元格的文本，防止 openpyxl 抛错或写出损坏文件。
+
+    处理规则：
+
+    - ``None`` 归一为空串；
+    - 数值 / 布尔等安全标量类型原样返回（保留单元格数值语义）；
+    - 字符串清除 openpyxl 非法控制字符（如 ``\x00``、``\x0b`` 等）；
+    - 超过 :data:`_MAX_CELL_CHARS` 字符时截断并追加“…[已截断]”标记
+      （openpyxl 单元格硬上限 32767 字符，兜底避免写出损坏文件）。
+    """
+    if text is None:
+        return ""
+    if isinstance(text, (int, float, bool)):
+        return text
+    if not isinstance(text, str):
+        text = str(text)
+    cleaned = ILLEGAL_CHARACTERS_RE.sub("", text)
+    if len(cleaned) > _MAX_CELL_CHARS:
+        cleaned = cleaned[:_MAX_CELL_CHARS] + _TRUNCATE_SUFFIX
+    return cleaned
+
+
+def _to_int(value: Any, default: int = 0) -> int:
+    """安全整数转换：脏字符串 / ``None`` 等失败时返回默认值并告警。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("数值字段 %r 无法转为整数，按 %s 处理", value, default)
+        return default
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    """安全浮点转换：脏字符串 / ``None`` 等失败时返回默认值并告警。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("数值字段 %r 无法转为浮点数，按 %s 处理", value, default)
+        return default
 
 
 def _display_width(text: str) -> int:
@@ -135,14 +181,29 @@ def _png_size(path: Path) -> Optional[Tuple[int, int]]:
     """从 PNG 文件头解析宽高（IHDR），失败返回 ``None``。"""
     try:
         header = path.read_bytes()[:26]
-    except OSError:
+    except (OSError, ValueError):  # ValueError: 路径含 NUL 等非法字符
         return None
     if len(header) < 26 or not header.startswith(_PNG_SIGNATURE):
         return None
     if header[12:16] != b"IHDR":
         return None
-    width, height = struct.unpack(">II", header[16:24])
+    try:
+        width, height = struct.unpack(">II", header[16:24])
+    except struct.error:  # 文件头被截断等异常形态
+        return None
     return width, height
+
+
+#: 零发现时依赖漏洞数据的工作表占位说明
+_EMPTY_HINTS = {
+    "漏洞详情": "本次扫描未发现安全问题，无漏洞详情可展示。",
+    "漏洞清单": "本次扫描未发现安全问题。",
+    "证据明细": "无漏洞证据可展示。",
+    "截图清单": "无漏洞关联截图。",
+    "POC脚本": "无漏洞对应的 POC 脚本。",
+    "EXP说明": "无漏洞对应的 EXP 说明。",
+    "复现步骤": "无漏洞复现步骤。",
+}
 
 
 def _truncate_lines(text: str, limit: int = 100) -> str:
@@ -225,6 +286,11 @@ class ExcelGenerator(BaseReportGenerator):
         self._fill_exp(wb["EXP说明"], findings)
         self._fill_repro(wb["复现步骤"], findings)
         self._fill_appendix(wb["附录"], report, findings)
+        if not findings:
+            # 零发现是合法场景：给依赖漏洞数据的工作表写占位说明，
+            # 保证报告完整可用且自检（所有工作表非空）能通过。
+            for name, hint in _EMPTY_HINTS.items():
+                self._write_empty_placeholder(wb[name], hint)
         wb.properties.title = str(
             get_attr(report, "title", "") or "移动安全审计报告"
         )
@@ -233,7 +299,19 @@ class ExcelGenerator(BaseReportGenerator):
         )
         for name in SHEET_ORDER:
             self._finalize_sheet(wb[name], skip_autosize=(name == "封面"))
-        wb.save(target)
+        try:
+            wb.save(target)
+        except OSError as exc:
+            # 目标被占用（如已在 Excel 中打开）或无写权限时，清理半成品
+            if target.exists():
+                try:
+                    target.unlink()
+                except OSError:
+                    logger.warning("清理残留半成品文件失败: %s", target)
+            raise ReportGenerationError(
+                f"写入 Excel 文件失败: {target} ({exc})。"
+                "请确认文件未被占用（如已在 Excel 中打开）且具有写权限。"
+            ) from exc
         self._verify_output(target)
         logger.info(
             "Excel 报告生成完成: %s (findings=%d)", target, len(findings)
@@ -317,7 +395,7 @@ class ExcelGenerator(BaseReportGenerator):
         """读取截图数量，兼容计数字段与截图列表。"""
         shots = get_attr(finding, "screenshots", []) or []
         explicit = get_attr(finding, "screenshot_count", 0)
-        return int(explicit or 0) or len(shots)
+        return _to_int(explicit or 0) or len(shots)
 
     def _has_poc(self, finding: Any) -> bool:
         """判断是否携带 POC（字符串 / 列表 / 布尔字段均可）。"""
@@ -408,6 +486,7 @@ class ExcelGenerator(BaseReportGenerator):
         row_idx = start_row + 1
         for i, values in enumerate(rows):
             for col, value in enumerate(values, start=1):
+                value = _sanitize(value)
                 cell = ws.cell(row=row_idx, column=col, value=value)
                 cell.border = _BORDER
                 if i % 2 == 1:
@@ -435,14 +514,14 @@ class ExcelGenerator(BaseReportGenerator):
         self, ws: Any, row: int, label: str, value: Any, span: int = 10
     ) -> None:
         """写入一行"标签 + 合并值单元格"（用于封面/详情/附录）。"""
-        lab = ws.cell(row=row, column=1, value=label)
+        lab = ws.cell(row=row, column=1, value=_sanitize(label))
         lab.font = Font(bold=True, size=11)
         lab.fill = _LABEL_FILL
         lab.alignment = Alignment(vertical="top")
         ws.merge_cells(
             start_row=row, start_column=2, end_row=row, end_column=span
         )
-        val = ws.cell(row=row, column=2, value=value)
+        val = ws.cell(row=row, column=2, value=_sanitize(value))
         val.alignment = Alignment(vertical="top", wrap_text=True)
         for col in range(1, span + 1):
             ws.cell(row=row, column=col).border = _BORDER
@@ -452,7 +531,7 @@ class ExcelGenerator(BaseReportGenerator):
         ws.merge_cells(
             start_row=row, start_column=1, end_row=row, end_column=span
         )
-        cell = ws.cell(row=row, column=1, value=title)
+        cell = ws.cell(row=row, column=1, value=_sanitize(title))
         cell.font = _HEADER_FONT
         cell.fill = _HEADER_FILL
         cell.alignment = Alignment(vertical="center")
@@ -473,14 +552,14 @@ class ExcelGenerator(BaseReportGenerator):
         )
         ws.merge_cells("A1:F1")
         head = ws["A1"]
-        head.value = title
+        head.value = _sanitize(title)
         head.font = Font(size=20, bold=True, color="FFFFFF")
         head.fill = PatternFill("solid", fgColor="1F4E79")
         head.alignment = Alignment(horizontal="center", vertical="center")
         ws.row_dimensions[1].height = 46
         ws.merge_cells("A2:F2")
         sub = ws["A2"]
-        sub.value = subtitle
+        sub.value = _sanitize(subtitle)
         sub.font = Font(size=11, italic=True, color="44546A")
         sub.fill = PatternFill("solid", fgColor="DDEBF7")
         sub.alignment = Alignment(horizontal="center", vertical="center")
@@ -541,7 +620,7 @@ class ExcelGenerator(BaseReportGenerator):
                 for key, value in sev_counts.items():
                     upper = str(key).upper()
                     if upper in counts:
-                        counts[upper] = int(value)
+                        counts[upper] = _to_int(value)
         total = sum(counts.values())
         rows = [
             [sev, counts[sev],
@@ -583,7 +662,7 @@ class ExcelGenerator(BaseReportGenerator):
                 start_row=row, start_column=1,
                 end_row=row, end_column=3,
             )
-            cell = ws.cell(row=row, column=1, value=overall)
+            cell = ws.cell(row=row, column=1, value=_sanitize(overall))
             cell.alignment = Alignment(vertical="top", wrap_text=True)
             for col in range(1, 4):
                 ws.cell(row=row, column=col).border = _BORDER
@@ -620,6 +699,13 @@ class ExcelGenerator(BaseReportGenerator):
             cell.hyperlink = f"#'漏洞详情'!A{anchors.get(fid, 1)}"
             cell.font = Font(color="0563C1", underline="single", bold=True)
 
+    def _write_empty_placeholder(self, ws: Any, hint: str) -> None:
+        """零发现场景在工作表首行写入合并占位说明。"""
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+        cell = ws.cell(row=1, column=1, value=_sanitize(hint))
+        cell.font = Font(italic=True, color="808080")
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
     def _fill_detail(
         self, ws: Any, report: Any, findings: List[Any]
     ) -> Dict[str, int]:
@@ -630,16 +716,26 @@ class ExcelGenerator(BaseReportGenerator):
             or "-"
         )
         anchors: Dict[str, int] = {}
+        seen: Dict[str, int] = {}
         row = 1
         for finding in findings:
             fid = self._finding_id(finding)
             title = str(get_attr(finding, "title", "") or "-")
-            anchors[fid] = row
+            if fid in anchors:
+                # 重复 vuln_id：锚点保留首次出现行，标题追加重复序号
+                seen[fid] = seen.get(fid, 1) + 1
+                title = f"{title} (重复#{seen[fid]})"
+            else:
+                anchors.setdefault(fid, row)
+                seen[fid] = 1
             ws.merge_cells(
                 start_row=row, start_column=1,
                 end_row=row, end_column=10,
             )
-            head = ws.cell(row=row, column=1, value=f"{fid}  {title}")
+            head = ws.cell(
+                row=row, column=1,
+                value=_sanitize(f"{fid}  {title}"),
+            )
             bg, _ = SEVERITY_STYLES[self._norm_severity(finding)]
             head.fill = PatternFill("solid", fgColor=bg)
             head.font = Font(bold=True, color="FFFFFF", size=12)
@@ -961,9 +1057,10 @@ class ExcelGenerator(BaseReportGenerator):
         if stats is not None:
             cov = get_attr(stats, "coverage_rate", None)
             if cov is not None:
+                cov_f = _to_float(cov)
                 text = (
-                    f"{float(cov) * 100:.1f}%"
-                    if 0 <= float(cov) <= 1 else str(cov)
+                    f"{cov_f * 100:.1f}%"
+                    if 0 <= cov_f <= 1 else str(cov)
                 )
                 pairs.append(("工具覆盖率", text))
         return pairs

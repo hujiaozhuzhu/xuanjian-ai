@@ -61,11 +61,13 @@ def _build_report(args: argparse.Namespace) -> object:
     poc = _load_json(Path(args.poc)) if args.poc else None
     apk_path = Path(args.apk) if args.apk else None
 
-    report = DataCollector.from_scan_outputs(
+    collector = DataCollector()
+    report = collector.from_scan_outputs(
         insight_json=insight, hook_json=hook, poc_json=poc
     )
     if apk_path is not None:
-        env = ReproducibilityManager.capture_environment(
+        manager = ReproducibilityManager()
+        env = manager.capture_environment(
             target_path=str(apk_path), scan_command=" ".join(sys.argv[1:])
         )
         report.environment = env
@@ -91,14 +93,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         report = _build_report(args)
         formats = [f.strip() for f in args.format.split(",") if f.strip()]
+        if not formats:
+            logger.error(
+                "--format 解析结果为空，请传入 excel/word/html 的逗号组合，"
+                "例如 --format html"
+            )
+            return 1
         generated = generate_report(report, args.output, formats=formats)
-    except (ValueError, RuntimeError, PermissionError) as exc:
+    except (ValueError, RuntimeError, PermissionError, OSError, TypeError) as exc:
         logger.error("报告生成失败: %s", exc)
         return 1
 
     for fmt, path in generated.items():
         logger.info("已生成 %s 报告: %s", fmt.upper(), path)
-    print("\n".join(f"{fmt.upper()}: {path}" for fmt, path in generated.items()))
+    logger.info("\n".join(f"{fmt.upper()}: {path}" for fmt, path in generated.items()))
     return 0
 
 

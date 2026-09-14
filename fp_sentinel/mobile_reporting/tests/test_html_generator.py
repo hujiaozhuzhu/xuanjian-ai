@@ -231,12 +231,20 @@ def sample_report(tmp_path: Path) -> MobileSecurityReport:
 
 
 def _render(
-    tmp_path: Path, report: object
+    tmp_path: Path,
+    report: object,
+    evidence_roots: list[Path] | None = None,
 ) -> Tuple[HtmlGenerator, Path, str]:
-    """在白名单目录内生成报告并返回 (generator, 路径, HTML 内容)。"""
+    """在白名单目录内生成报告并返回 (generator, 路径, HTML 内容)。
+
+    默认将 tmp_path 设为截图证据白名单根目录（与测试截图位置一致）。
+    """
     out_dir = tmp_path / "out"
     gen = HtmlGenerator(
-        allowed_roots=[out_dir], screenshot_base_dir=tmp_path
+        allowed_roots=[out_dir],
+        screenshot_base_dir=tmp_path,
+        evidence_roots=evidence_roots if evidence_roots is not None
+        else [tmp_path],
     )
     path = gen.generate(report, out_dir / "report.html")
     return gen, path, path.read_text(encoding="utf-8")
@@ -351,6 +359,24 @@ class TestScreenshots:
         report = _minimal_report_with_shot(str(png), shots=[shot])
         _, _, html = _render(tmp_path, report)
         assert "截图校验未通过" in html
+
+    def test_screenshot_outside_evidence_whitelist(
+        self, tmp_path
+    ) -> None:
+        """截图真实路径不在证据白名单内时，渲染占位框且不嵌入 base64。"""
+        png = tmp_path / "outside_whitelist.png"
+        png.write_bytes(_make_png())
+        report = _minimal_report_with_shot(str(png))
+        allowed_root = tmp_path / "evidence"
+        allowed_root.mkdir()
+        gen, _, html = _render(
+            tmp_path, report, evidence_roots=[allowed_root]
+        )
+        assert "截图缺失" in html
+        assert "路径不在证据白名单" in html
+        assert "data:image/" not in html
+        assert gen._embedded_count == 0
+        assert gen._blocked_count == 1
 
 
 def _minimal_report_with_shot(
@@ -480,6 +506,7 @@ class TestSelfCheck:
 
     def test_wrong_base64_count_raises(self, tmp_path) -> None:
         gen = HtmlGenerator(allowed_roots=[tmp_path])
+        gen._embedded_count = 1  # 模拟已成功嵌入 1 张截图
         fake = [{
             "anchor": "finding-VULN-001",
             "screenshots": [{"state": "ok"}],
@@ -488,3 +515,30 @@ class TestSelfCheck:
               "</body></html>"
         with pytest.raises(ReportGenerationError):
             gen._self_check(doc, fake)
+
+    def test_evidence_text_with_data_uri_not_misjudged(
+        self, tmp_path
+    ) -> None:
+        """证据文本恰含 "data:image/" 字样时自检不误判、生成不失败。"""
+        report = MobileSecurityReport(
+            title="data URI 证据文本报告",
+            vulnerabilities=[
+                Vulnerability(
+                    vuln_id="VULN-300",
+                    title="证据含 data:image/ 字样",
+                    severity="LOW",
+                    evidence=[
+                        Evidence(
+                            location="a.java:1",
+                            content=(
+                                'log.d("payload", "data:image/png;base64,'
+                                'iVBORw0KGgo=");'
+                            ),
+                        ),
+                    ],
+                ),
+            ],
+        )
+        # 无截图嵌入（expected=0），文本额外出现 data:image/ 不应报错
+        _, _, html = _render(tmp_path, report)
+        assert "data:image/png;base64," in html

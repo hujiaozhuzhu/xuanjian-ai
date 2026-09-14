@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -83,14 +84,15 @@ class PocExpIntegrator:
         reasons: List[str] = []
         level = SAFETY_SAFE
         content = script_content or ""
+        content_lower = content.lower()
         for pattern, reason in DANGEROUS_PATTERNS:
-            if pattern in content:
+            if pattern.lower() in content_lower:
                 reasons.append(f"{reason}（特征: {pattern.strip()}）")
                 level = SAFETY_DANGER
         if level == SAFETY_DANGER:
             return level, reasons
         for pattern, reason in WARNING_PATTERNS:
-            if pattern in content:
+            if pattern.lower() in content_lower:
                 reasons.append(f"{reason}（特征: {pattern.strip()}）")
                 level = SAFETY_WARNING
         return level, reasons
@@ -140,7 +142,9 @@ class PocExpIntegrator:
             logger.warning("POC 目录不存在: %s", poc_dir)
             return None
         scripts = [
-            s for s in self._discover_scripts(dir_path) if s not in self._consumed
+            s
+            for s in self._discover_scripts(dir_path)
+            if os.path.normcase(str(s)) not in self._consumed
         ]
         if not scripts:
             logger.warning("POC 目录中未发现可用脚本: %s", poc_dir)
@@ -180,7 +184,7 @@ class PocExpIntegrator:
                 "POC %s 命中安全红线，已标记 DANGER 并截断展示", poc.id
             )
         finding.poc = poc
-        self._consumed.add(script)
+        self._consumed.add(os.path.normcase(str(script)))
         logger.info("POC 已集成: %s -> %s", script.name, finding.id)
         return poc
 

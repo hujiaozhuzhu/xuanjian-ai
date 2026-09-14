@@ -153,9 +153,19 @@ class DataCollector:
             file_ref = str(code_ref.get("file", "") or "<未知文件>")
             line_ref = self._to_int(code_ref.get("line"), 0)
             location = f"{file_ref}:{line_ref}"
-            evidence_items = [
-                str(x) for x in (item.get("evidence") or []) if str(x).strip()
-            ]
+            evidence_raw = item.get("evidence")
+            if isinstance(evidence_raw, str):
+                evidence_items = [evidence_raw] if evidence_raw.strip() else []
+            elif isinstance(evidence_raw, list):
+                evidence_items = [
+                    str(x)
+                    for x in evidence_raw
+                    if isinstance(x, (str, int, float)) and str(x).strip()
+                ]
+            else:
+                if evidence_raw not in (None, []):
+                    self._warn(f"{finding_id} 的 evidence 类型不受支持，已忽略")
+                evidence_items = []
             evidence = Evidence(
                 id=f"EV-{finding_id}-01",
                 location=location,
@@ -288,7 +298,13 @@ class DataCollector:
             if not isinstance(item, dict):
                 self._warn(f"poc results[{idx}] 不是对象，已跳过")
                 continue
-            meta = item.get("metadata") or {}
+            meta = item.get("metadata")
+            if not isinstance(meta, dict):
+                if meta is not None:
+                    self._warn(
+                        f"poc results[{idx}] 的 metadata 不是对象，已按空处理"
+                    )
+                meta = {}
             target_finding = str(
                 meta.get("vuln_id") or meta.get("finding_id") or ""
             )
@@ -301,12 +317,13 @@ class DataCollector:
                 continue
             content = str(item.get("script") or "")
             safety_level, reasons = integrator.safety_check(content)
+            display = integrator._truncate_for_display(content, safety_level)
             poc = PocInfo(
                 id=f"POC-{finding.id}",
                 name=str(item.get("goal") or item.get("template") or finding.id),
                 type="frida" if str(item.get("language", "js")) == "js" else "java",
                 script_path=str(item.get("script_path") or ""),
-                script_content=content,
+                script_content=display,
                 safety_level=safety_level,
                 description=str(
                     item.get("goal") or ""

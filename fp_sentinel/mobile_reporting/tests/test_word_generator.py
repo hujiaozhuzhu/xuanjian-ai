@@ -424,3 +424,81 @@ def test_severity_distribution_colored(
     assert fills[1] == "C00000"  # HIGH 红
     assert fills[2] == "E36C0A"  # MEDIUM 橙
     assert fills[4] == "2E74B5"  # INFO 蓝
+
+
+# ─────────────────────── 健壮性回归测试 ───────────────────────
+
+
+def test_empty_findings_report_generates(
+    generator: WordGenerator, tmp_path: Path
+) -> None:
+    """空 findings 的合法报告能成功生成且自检通过。"""
+    report = MobileSecurityReport(
+        title="空报告自检",
+        vulnerabilities=[],
+    )
+    out = generator.generate(report, tmp_path / "empty.docx")
+    assert out.exists()
+    doc = Document(str(out))
+    h1_texts = [p.text for p in doc.paragraphs if p.style.name == "Heading 1"]
+    assert len(h1_texts) == 6
+    assert len(doc.tables) >= 1
+    assert len(doc.paragraphs) >= 10
+    text = _doc_text(doc)
+    assert "本次测试未发现" in text
+
+
+def test_string_evidence_rendered(
+    generator: WordGenerator, tmp_path: Path
+) -> None:
+    """evidence 为字符串列表时应作为代码内容正确展示。"""
+    vuln = Vulnerability(
+        vuln_id="VULN-STR",
+        title="字符串证据展示",
+        severity="MEDIUM",
+        evidence=["adb shell dumpsys package com.example", "const X = 1;"],
+    )
+    report = MobileSecurityReport(
+        title="字符串证据", vulnerabilities=[vuln]
+    )
+    out = generator.generate(report, tmp_path / "str_evidence.docx")
+    text = _doc_text(Document(str(out)))
+    assert "证据 1 位置：未知位置" in text
+    assert "adb shell dumpsys package com.example" in text
+    assert "const X = 1;" in text
+
+
+def test_unknown_severity_counted_as_unknown(
+    generator: WordGenerator, tmp_path: Path
+) -> None:
+    """脏 severity（含首尾空格的合法值 / 未知值）统计不崩溃且未知值入"未知"列。"""
+    vulns = [
+        Vulnerability(
+            vuln_id="VULN-U1",
+            title="带空格的高危",
+            severity="  HIGH  ",
+        ),
+        Vulnerability(
+            vuln_id="VULN-U2",
+            title="未知等级",
+            severity="WEIRD",
+        ),
+    ]
+    report = MobileSecurityReport(
+        title="未知severity", vulnerabilities=vulns
+    )
+    out = generator.generate(report, tmp_path / "unknown_sev.docx")
+    doc = Document(str(out))
+    text = _doc_text(doc)
+    # "  HIGH  " 被 strip/upper 后计入 HIGH，而非产生未知行之外的脏键
+    assert "[HIGH]" in text
+    # 未知值计入"未知"列
+    assert "未知" in text
+    table = next(
+        t for t in doc.tables
+        if [c.text for c in t.rows[0].cells] == ["严重程度", "数量"]
+    )
+    rows = {r.cells[0].text: r.cells[1].text for r in table.rows[1:]}
+    assert rows["HIGH"] == "1"
+    assert rows["未知"] == "1"
+    assert rows["合计"] == "2"

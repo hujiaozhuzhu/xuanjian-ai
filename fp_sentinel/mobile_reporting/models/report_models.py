@@ -55,11 +55,39 @@ _FINDING_REQUIRED_FIELDS = ("id", "title", "severity", "description")
 
 
 def _clamp_confidence(value: Any, default: float = 0.5) -> float:
-    """把任意输入安全地转换为 0~1 的置信度浮点数。"""
+    """把任意输入安全地转换为 0~1 的置信度浮点数（越界值截断到边界）。"""
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError):
         return default
+    return max(0.0, min(1.0, result))
+
+
+def _safe_int(value: Any, default: int = 0) -> int:
+    """宽容 int 转换，失败时回退默认值并记录 warning。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        logger.warning("int 转换失败，已回退默认值 %r: %r", default, value)
+        return default
+
+
+def _dict_items(raw: Any, label: str) -> List[Dict[str, Any]]:
+    """把嵌套列表规整为 dict 列表（非 dict 元素记录 warning 后跳过）。"""
+    if not raw:
+        return []
+    if not isinstance(raw, list):
+        logger.warning("%s 不是列表，已忽略: %r", label, type(raw).__name__)
+        return []
+    items: List[Dict[str, Any]] = []
+    for idx, element in enumerate(raw, start=1):
+        if isinstance(element, dict):
+            items.append(element)
+        else:
+            logger.warning(
+                "%s[%d] 不是对象，已跳过: %r", label, idx, type(element).__name__
+            )
+    return items
 
 
 @dataclass
@@ -85,7 +113,7 @@ class TargetAppInfo:
             package=str(data.get("package", "") or ""),
             version=str(data.get("version", "") or ""),
             sha256=str(data.get("sha256", "") or ""),
-            file_size=int(data.get("file_size", 0) or 0),
+            file_size=_safe_int(data.get("file_size", 0) or 0),
         )
 
 
@@ -109,6 +137,11 @@ class EnvironmentInfo:
         """从 dict 反序列化，字段缺失时使用默认值。"""
         data = data or {}
         tools_raw = data.get("tool_versions") or {}
+        if not isinstance(tools_raw, dict):
+            logger.warning(
+                "tool_versions 不是对象，已按空处理: %r", type(tools_raw).__name__
+            )
+            tools_raw = {}
         tool_versions = {str(k): str(v) for k, v in tools_raw.items()}
         return cls(
             os=str(data.get("os", "") or ""),
@@ -174,8 +207,8 @@ class ScreenshotRef:
             path=str(data.get("path", "") or ""),
             caption=str(data.get("caption", "") or ""),
             sha256=str(data.get("sha256", "") or ""),
-            width=int(data.get("width", 0) or 0),
-            height=int(data.get("height", 0) or 0),
+            width=_safe_int(data.get("width", 0) or 0),
+            height=_safe_int(data.get("height", 0) or 0),
             format=str(data.get("format", "") or ""),
             verified=bool(data.get("verified", False)),
             verify_message=str(data.get("verify_message", "") or ""),
@@ -201,7 +234,7 @@ class ReproStep:
         """从 dict 反序列化，字段缺失时使用默认值。"""
         data = data or {}
         return cls(
-            step_no=int(data.get("step_no", 1) or 1),
+            step_no=_safe_int(data.get("step_no", 1) or 1, default=1),
             action=str(data.get("action", "") or ""),
             expected_result=str(data.get("expected_result", "") or ""),
             actual_result=str(data.get("actual_result", "") or ""),
@@ -309,12 +342,16 @@ class FindingReport:
             owasp_masvs=str(data.get("owasp_masvs", "") or ""),
             category=str(data.get("category", "") or ""),
             description=str(data.get("description", "") or ""),
-            evidence=[Evidence.from_dict(e) for e in (data.get("evidence") or [])],
+            evidence=[
+                Evidence.from_dict(e) for e in _dict_items(data.get("evidence"), "evidence")
+            ],
             screenshots=[
-                ScreenshotRef.from_dict(s) for s in (data.get("screenshots") or [])
+                ScreenshotRef.from_dict(s)
+                for s in _dict_items(data.get("screenshots"), "screenshots")
             ],
             repro_steps=[
-                ReproStep.from_dict(s) for s in (data.get("repro_steps") or [])
+                ReproStep.from_dict(s)
+                for s in _dict_items(data.get("repro_steps"), "repro_steps")
             ],
             poc=PocInfo.from_dict(data.get("poc")) if data.get("poc") else None,
             exp=ExpInfo.from_dict(data.get("exp")) if data.get("exp") else None,
@@ -343,14 +380,22 @@ class ReportStatistics:
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "ReportStatistics":
         """从 dict 反序列化，字段缺失时使用默认值。"""
         data = data or {}
-        sev = {str(k): int(v) for k, v in (data.get("by_severity") or {}).items()}
-        cat = {str(k): int(v) for k, v in (data.get("by_category") or {}).items()}
+        sev_raw = data.get("by_severity") or {}
+        cat_raw = data.get("by_category") or {}
+        if not isinstance(sev_raw, dict):
+            logger.warning("by_severity 不是对象，已按空处理: %r", type(sev_raw).__name__)
+            sev_raw = {}
+        if not isinstance(cat_raw, dict):
+            logger.warning("by_category 不是对象，已按空处理: %r", type(cat_raw).__name__)
+            cat_raw = {}
+        sev = {str(k): _safe_int(v) for k, v in sev_raw.items()}
+        cat = {str(k): _safe_int(v) for k, v in cat_raw.items()}
         try:
             duration = float(data.get("scan_duration_seconds", 0.0) or 0.0)
         except (TypeError, ValueError):
             duration = 0.0
         return cls(
-            total_count=int(data.get("total_count", 0) or 0),
+            total_count=_safe_int(data.get("total_count", 0) or 0),
             by_severity=sev,
             by_category=cat,
             coverage_metrics=dict(data.get("coverage_metrics") or {}),
@@ -442,7 +487,9 @@ class MobileSecurityReport:
     def from_dict(cls, data: Optional[Dict[str, Any]]) -> "MobileSecurityReport":
         """从 dict 反序列化，字段缺失时宽容处理。"""
         data = data or {}
-        findings = [FindingReport.from_dict(f) for f in (data.get("findings") or [])]
+        findings = [
+            FindingReport.from_dict(f) for f in _dict_items(data.get("findings"), "findings")
+        ]
         return cls(
             metadata=ReportMetadata.from_dict(data.get("metadata")),
             environment=(
@@ -487,7 +534,7 @@ class MobileSecurityReport:
             for req in _FINDING_REQUIRED_FIELDS:
                 if not str(getattr(finding, req) or "").strip():
                     warnings.append(f"{prefix} 必填字段为空: {req}")
-            if finding.severity not in VALID_SEVERITIES:
+            if finding.severity.strip().upper() not in VALID_SEVERITIES:
                 warnings.append(
                     f"{prefix} 非法 severity: {finding.severity!r}"
                     f"（合法值: {list(VALID_SEVERITIES)}）"

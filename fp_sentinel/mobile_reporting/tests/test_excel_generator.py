@@ -10,9 +10,10 @@ from __future__ import annotations
 import struct
 import zlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
-from openpyxl import load_workbook
+from openpyxl import Workbook, load_workbook
 
 from fp_sentinel.mobile_reporting.formats._fallback_models import (
     Evidence,
@@ -32,6 +33,8 @@ from fp_sentinel.mobile_reporting.formats.excel_generator import (
     SHEET_ORDER,
     ExcelGenerator,
     ReportGenerationError,
+    _PNG_SIGNATURE,
+    _png_size,
 )
 
 
@@ -438,3 +441,182 @@ def test_screenshot_info_extracted(generator, sample_report, tmp_path):
 def test_report_generation_error_type():
     """ReportGenerationError 可用且继承 RuntimeError。"""
     assert issubclass(ReportGenerationError, RuntimeError)
+
+
+# ─────────────────────── 健壮性回归测试 ───────────────────────
+
+
+def test_illegal_chars_and_oversize_text_sanitized(tmp_path):
+    """含 \\x00 控制字符与超长文本的 finding 不崩溃且内容被清洗/截断。"""
+    dirty_desc = "前缀\x00含NUL\x0b与\x1a非法字符" + "长" * 45000
+    vuln = Vulnerability(
+        vuln_id="VULN-DIRTY",
+        title="脏字符\x00与超长文本",
+        severity="HIGH",
+        description=dirty_desc,
+        evidence=[
+            Evidence(
+                location="a.java:1",
+                content="code\x00with\x1bNUL",
+            ),
+        ],
+    )
+    report = MobileSecurityReport(title="清洗测试", vulnerabilities=[vuln])
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    out = tmp_path / "dirty.xlsx"
+    gen.generate(report, out)  # 不应抛 openpyxl 非法字符异常
+    wb = _load(tmp_path, "dirty.xlsx")
+    texts = [
+        str(cell.value)
+        for row in wb["漏洞详情"].iter_rows()
+        for cell in row
+        if cell.value
+    ]
+    joined = "\n".join(texts)
+    assert "\x00" not in joined
+    assert "\x0b" not in joined and "\x1a" not in joined
+    # 超长文本被截断到 32000 + 截断标记
+    assert any("已截断" in t for t in texts)
+    assert all(len(t) <= 32000 + 10 for t in texts)
+    # 证据片段中的控制字符同样被清洗
+    evi_texts = [
+        str(cell.value)
+        for row in wb["证据明细"].iter_rows()
+        for cell in row
+        if cell.value
+    ]
+    assert all("\x00" not in t and "\x1b" not in t for t in evi_texts)
+    wb.close()
+
+
+def test_dirty_numeric_fields_no_crash(tmp_path):
+    """数量字段为脏字符串（如 "abc"）时生成 Excel 不崩溃。"""
+    vuln = SimpleNamespace(
+        vuln_id="VULN-N1",
+        title="脏数字字段",
+        severity="HIGH",
+        screenshot_count="abc",
+        screenshots=[],
+    )
+    report = MobileSecurityReport(title="脏数字", vulnerabilities=[vuln])
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    out = tmp_path / "dirty_num.xlsx"
+    gen.generate(report, out)
+    wb = _load(tmp_path, "dirty_num.xlsx")
+    # 脏 screenshot_count 转换失败后回退为截图列表长度 0
+    assert wb["漏洞清单"].cell(row=2, column=8).value == 0
+    wb.close()
+
+
+def test_dirty_statistics_and_coverage_no_crash(tmp_path):
+    """统计 severity_counts 值与 coverage_rate 为脏字符串时计算不崩溃。
+
+    注：整份空 findings 报告的 Excel 自检（漏洞详情表非空校验）属既有
+    行为，此处针对脏数值容错逻辑做单元级验证。
+    """
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    report = SimpleNamespace(
+        title="脏统计",
+        vulnerabilities=[],
+        statistics=SimpleNamespace(
+            severity_counts={"HIGH": "abc", "LOW": 2},
+            coverage_rate="abc",
+        ),
+    )
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "漏洞概览"
+    gen._fill_overview(ws, report, [])  # 不应抛 ValueError
+    counts = {
+        ws.cell(row=2 + i, column=1).value: ws.cell(row=2 + i, column=2).value
+        for i in range(5)
+    }
+    assert counts["HIGH"] == 0  # "abc" 转换失败按 0 处理
+    assert counts["LOW"] == 2  # 合法值 2 保留
+    # coverage_rate="abc" 走兜底展示，不崩溃
+    pairs = gen._coverage_pairs(report, [])
+    coverage = dict(pairs).get("工具覆盖率")
+    assert coverage is not None
+
+
+def test_duplicate_finding_id_keeps_first_anchor(tmp_path):
+    """重复 vuln_id：锚点保留首次出现行，后续详情标题追加 (重复#N)。"""
+    dup1 = SimpleNamespace(
+        vuln_id="VULN-DUP", title="第一次出现", severity="HIGH"
+    )
+    dup2 = SimpleNamespace(
+        vuln_id="VULN-DUP", title="重复出现", severity="HIGH"
+    )
+    report = MobileSecurityReport(
+        title="重复ID", vulnerabilities=[dup1, dup2]
+    )
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    out = tmp_path / "dup.xlsx"
+    gen.generate(report, out)
+    wb = _load(tmp_path, "dup.xlsx")
+    ws = wb["漏洞详情"]
+    head_texts = [
+        str(ws.cell(row=r, column=1).value)
+        for r in range(1, ws.max_row + 1)
+        if ws.cell(row=r, column=1).value
+    ]
+    heads = [t for t in head_texts if t.startswith("VULN-DUP")]
+    assert heads[0] == "VULN-DUP  第一次出现"
+    assert any("(重复#2)" in t for t in heads[1:])
+    # 漏洞清单超链接指向首次出现的区块行
+    link = wb["漏洞清单"].cell(row=3, column=1)
+    assert link.hyperlink is not None
+    wb.close()
+
+
+def test_save_failure_raises_and_cleans_residual(
+    tmp_path, monkeypatch
+):
+    """wb.save 失败时抛 ReportGenerationError 并清理残留半成品文件。"""
+    import fp_sentinel.mobile_reporting.formats.excel_generator as eg
+
+    vuln = Vulnerability(vuln_id="VULN-S1", title="保存失败", severity="LOW")
+    report = MobileSecurityReport(title="保存失败", vulnerabilities=[vuln])
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    out = tmp_path / "residual.xlsx"
+    out.write_bytes(b"stale-residual")  # 预置残留文件
+
+    def _boom(_self, _path):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(eg.Workbook, "save", _boom)
+    with pytest.raises(ReportGenerationError) as exc_info:
+        gen.generate(report, out)
+    assert "未被占用" in str(exc_info.value) or "写权限" in str(exc_info.value)
+    # 残留半成品文件已被清理
+    assert not out.exists()
+
+
+def test_png_size_handles_invalid_paths(tmp_path):
+    """_png_size 对截断文件头与含 NUL 路径均返回 None 而非抛异常。"""
+    truncated = tmp_path / "truncated.png"
+    truncated.write_bytes(_PNG_SIGNATURE + b"\x00\x00")  # 不足 26 字节
+    assert _png_size(truncated) is None
+    nul_path = tmp_path / "nul\x00.png"  # 路径含 NUL → ValueError
+    assert _png_size(nul_path) is None
+
+
+def test_zero_findings_report_generates_with_placeholders(tmp_path):
+    """零发现是合法场景：报告可正常生成，依赖漏洞的表写入占位说明。"""
+    gen = ExcelGenerator(allowed_roots=[tmp_path])
+    report = SimpleNamespace(
+        title="零发现报告",
+        report_version="V1.0",
+        vulnerabilities=[],
+        statistics=SimpleNamespace(severity_counts={}, coverage_rate=0.0),
+    )
+    out = gen.generate(report, tmp_path / "empty.xlsx")
+    assert out.exists()
+    wb = _load(tmp_path, "empty.xlsx")
+    assert wb["漏洞详情"].cell(row=1, column=1).value == (
+        "本次扫描未发现安全问题，无漏洞详情可展示。"
+    )
+    assert wb["漏洞清单"].cell(row=1, column=1).value == "本次扫描未发现安全问题。"
+    assert wb["POC脚本"].cell(row=1, column=1).value is not None
+    assert wb["复现步骤"].cell(row=1, column=1).value is not None
+    wb.close()

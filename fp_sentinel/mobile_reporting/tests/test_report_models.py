@@ -259,3 +259,116 @@ class TestValidate:
             ]
         )
         assert any("缺少 path" in w for w in report.validate())
+
+
+# ---------------------------------------------------------------------------
+# from_dict 脏数据健壮性与 validate 大小写一致性回归
+# ---------------------------------------------------------------------------
+
+
+class TestFromDictDirtyData:
+    """脏 JSON 反序列化不崩溃回归。"""
+
+    def test_tool_versions_list_becomes_empty(self) -> None:
+        """tool_versions 为列表时转空 dict 而非崩溃。"""
+        env = EnvironmentInfo.from_dict({"tool_versions": ["frida", "1.0"]})
+        assert env.tool_versions == {}
+
+    def test_file_size_dirty_string_falls_back(self) -> None:
+        """file_size / width / height / step_no 为脏字符串时回退默认值。"""
+        assert TargetAppInfo.from_dict({"file_size": "abc"}).file_size == 0
+        ref = ScreenshotRef.from_dict({"width": "abc", "height": "xyz"})
+        assert ref.width == 0 and ref.height == 0
+        step = ReproStep.from_dict({"step_no": "abc"})
+        assert step.step_no == 1
+
+    def test_nested_non_dict_elements_skipped(self) -> None:
+        """evidence / screenshots / repro_steps 中非对象元素跳过不崩溃。"""
+        finding = FindingReport.from_dict({
+            "id": "X1",
+            "title": "t",
+            "severity": "HIGH",
+            "description": "d",
+            "evidence": ["junk", {"content": "real"}],
+            "screenshots": ["junk", {"path": "a.png"}],
+            "repro_steps": [1, {"action": "a"}],
+        })
+        assert [e.content for e in finding.evidence] == ["real"]
+        assert [s.path for s in finding.screenshots] == ["a.png"]
+        assert [r.action for r in finding.repro_steps] == ["a"]
+
+    def test_nested_non_list_ignored(self) -> None:
+        """嵌套字段为非列表时整体忽略不崩溃。"""
+        finding = FindingReport.from_dict({
+            "id": "X1",
+            "title": "t",
+            "severity": "HIGH",
+            "description": "d",
+            "evidence": "not-a-list",
+        })
+        assert finding.evidence == []
+
+    def test_findings_non_dict_element_skipped(self) -> None:
+        """报告级 findings 列表中的非对象元素跳过不崩溃。"""
+        report = MobileSecurityReport.from_dict({
+            "findings": ["junk", {"id": "X1", "title": "t",
+                                  "severity": "HIGH", "description": "d"}],
+        })
+        assert [f.id for f in report.findings] == ["X1"]
+
+    def test_statistics_non_dict_counts(self) -> None:
+        """statistics 的 by_severity/by_category 非对象时转空 dict。"""
+        stats = ReportStatistics.from_dict({
+            "by_severity": ["HIGH"],
+            "by_category": "junk",
+            "total_count": "abc",
+        })
+        assert stats.by_severity == {}
+        assert stats.by_category == {}
+        assert stats.total_count == 0
+
+    def test_confidence_clamped_to_bounds(self) -> None:
+        """confidence 越界截断到 [0, 1]，非法值回退默认。"""
+        assert FindingReport.from_dict({"confidence": 5}).confidence == 1.0
+        assert FindingReport.from_dict({"confidence": -0.2}).confidence == 0.0
+        assert FindingReport.from_dict({"confidence": "abc"}).confidence == 0.5
+        assert FindingReport.from_dict({"confidence": 0.7}).confidence == 0.7
+
+
+class TestValidateSeverityCaseInsensitive:
+    """validate 与 from_dict 大小写行为一致性回归。"""
+
+    def test_lowercase_severity_not_warned(self) -> None:
+        """severity 为小写 "high" 时 validate 不告警。"""
+        report = MobileSecurityReport(
+            findings=[
+                FindingReport(
+                    id="VUL-001", title="t", severity="high", description="d"
+                )
+            ]
+        )
+        warnings = report.validate()
+        assert not any("severity" in w for w in warnings)
+
+    def test_invalid_severity_still_warned(self) -> None:
+        """真正非法的 severity 仍然告警。"""
+        report = MobileSecurityReport(
+            findings=[
+                FindingReport(
+                    id="VUL-001", title="t", severity="SUPER", description="d"
+                )
+            ]
+        )
+        assert any("非法 severity" in w for w in report.validate())
+
+    def test_confidence_out_of_range_warned(self) -> None:
+        """直接构造的越界 confidence 仍被 validate 告警。"""
+        report = MobileSecurityReport(
+            findings=[
+                FindingReport(
+                    id="VUL-001", title="t", severity="HIGH", description="d",
+                    confidence=1.5,
+                )
+            ]
+        )
+        assert any("confidence 超出" in w for w in report.validate())
