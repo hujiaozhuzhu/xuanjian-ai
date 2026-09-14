@@ -32,3 +32,24 @@ target-lab-temp/
 
 # 测试产物
 reports_static_*/
+
+# v4.0 测试靶场（课程版权内容，不入库）
+test_apps/
+
+# 三轮迭代验证产物（数据量大，报告已归档到docs/）
+round2_retest/
+round3_final_verify/
+release_verify/
+tmp_verify/
+out_ib2/
+poc_scripts/
+.reportsmobile_shell_smoke/
+reports/mobile_shell/
+
+# 迭代验证临时文件
+hook_ib2*
+insight_ib2*
+strings_ib2*
+rules.json
+rules_err.txt
+poc_ssl*

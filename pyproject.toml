@@ -88,6 +88,8 @@ omit = [
     "fp_sentinel/privacy/routes.py",
     "fp_sentinel/auto_pr/cli.py",
     "tests/*",
+    "fp_sentinel/mobile_hook/tests/*",
+    "fp_sentinel/mobile_decompile/tests/*",
 ]
 
 [tool.coverage.report]

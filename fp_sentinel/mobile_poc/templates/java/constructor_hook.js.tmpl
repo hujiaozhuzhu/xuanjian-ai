@@ -1,0 +1,39 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 构造方法 Hook (constructor_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }} 的构造函数 ($init), 捕获对象创建时机与初始化参数,
+ *   适合定位: 配置类/请求参数对象/加密上下文的实例化点。
+ *
+ * 【风险提示】
+ *   1. 构造函数调用极其频繁的类(如 String)会拖垮目标进程, 只对低频业务类使用;
+ *   2. 仅用于授权测试, 数据仅本地打印(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l constructor_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][ctor_hook]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    var ctor = clazz.$init;
+
+    ctor.overloads.forEach(function (ov) {
+        var sig = ov.argumentTypes.map(function (t) { return t.className; }).join(', ');
+        ov.implementation = function () {
+            console.log(LOG_TAG + ' [+] new ' + TARGET_CLASS + '(' + sig + ')');
+            for (var i = 0; i < arguments.length; i++) {
+                console.log(LOG_TAG + '   arg[' + i + ']: ' + arguments[i]);
+            }
+            var instance = ov.apply(this, arguments);
+            console.log(LOG_TAG + '   instance hash: ' + this.hashCode());
+            return instance;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] constructor hook installed on ' + TARGET_CLASS);
+});

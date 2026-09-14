@@ -1,0 +1,122 @@
+#!/usr/bin/env python3
+# ============================================================
+# 玄鉴 v4.0 Frida POC —— 明文抓取组合套件 (plaintext_capture)
+# ============================================================
+# 【功能说明】
+#   Python 宿主 + Frida JS 注入的组合脚本:
+#   - JS 层 Hook {{ class_name | default("目标加解密类") }}.{{ method_name | default("encrypt/decrypt") }},
+#     把加密前明文/解密后明文经 Frida send() 通道回传;
+#   - Python 层接收消息并写入本地 SQLite(红线 M2: 数据仅本地留存, 严禁外发)。
+#
+# 【风险提示】
+#   1. 抓取内容为业务明文(可能含账号/密码/Token), 仅限授权测试;
+#   2. 全部数据仅写入本地 ./plaintext_capture.db, 代码内无任何网络外发路径(红线 M2/M8);
+#   3. POC 仅做参数打印, 不修改业务逻辑(红线 M7)。
+#
+# 【使用方法】
+#   1. 设备已 root 且运行 frida-server;
+#   2. pip install frida frida-tools;
+#   3. python plaintext_capture.py  (spawn 启动 {{ package_name | default("com.target.app") }})
+# ============================================================
+import json
+import sqlite3
+import sys
+import time
+
+import frida
+
+# ---- 配置区(按目标 App 修改) ----
+PACKAGE_NAME = "{{ package_name | default("com.target.app") }}"
+TARGET_CLASS = "{{ class_name | default("com.target.app.network.EncryptUtil") }}"
+TARGET_METHOD = "{{ method_name | default("encrypt") }}"
+LOG_TAG = "{{ log_tag | default("[fp-sentinel][plaintext]") }}"
+DB_PATH = "./plaintext_capture.db"
+
+# ---- Frida JS 注入脚本 ----
+JS_HOOK = r"""
+'use strict';
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][plaintext]") }}';
+Java.perform(function () {
+    var clazz = Java.use('{{ class_name | default("com.target.app.network.EncryptUtil") }}');
+    clazz['{{ method_name | default("encrypt") }}'].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) {
+                args.push(String(arguments[i]));
+            }
+            var ret = ov.apply(this, arguments);
+            send({
+                tag: LOG_TAG,
+                cls: '{{ class_name | default("com.target.app.network.EncryptUtil") }}',
+                method: '{{ method_name | default("encrypt") }}',
+                args: args,
+                ret: String(ret),
+                ts: Date.now()
+            });
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] plaintext capture hook installed');
+});
+"""
+
+
+def init_db(db_path: str) -> sqlite3.Connection:
+    """初始化本地 SQLite(数据唯一落盘位置, 无网络通道)。"""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS plaintext ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " ts TEXT, cls TEXT, method TEXT, args TEXT, ret TEXT)"
+    )
+    conn.commit()
+    return conn
+
+
+def on_message(message: dict, data) -> None:
+    """Frida 消息回调: 只落库, 不外发。"""
+    if message.get("type") != "send":
+        return
+    payload = message.get("payload", {})
+    conn = init_db(DB_PATH)
+    conn.execute(
+        "INSERT INTO plaintext (ts, cls, method, args, ret) VALUES (?,?,?,?,?)",
+        (
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(payload.get("ts", time.time() * 1000) / 1000)),
+            payload.get("cls", ""),
+            payload.get("method", ""),
+            json.dumps(payload.get("args", []), ensure_ascii=False),
+            payload.get("ret", ""),
+        ),
+    )
+    conn.commit()
+    print(LOG_TAG, "[+]", payload.get("cls"), payload.get("method"),
+          payload.get("args"), "->", payload.get("ret"))
+
+
+def main() -> int:
+    try:
+        device = frida.get_usb_device(timeout=5)
+    except Exception as exc:
+        print(LOG_TAG, "[!] 未找到 USB 设备(需 root + frida-server):", exc)
+        return 1
+
+    print(LOG_TAG, "[*] spawning", PACKAGE_NAME)
+    pid = device.spawn([PACKAGE_NAME])
+    session = device.attach(pid)
+    script = session.create_script(JS_HOOK)
+    script.on("message", on_message)
+    script.load()
+    device.resume(pid)
+    print(LOG_TAG, "[✓] hook 已注入, 明文数据将写入", DB_PATH, "(仅本地)")
+    print(LOG_TAG, "[i] Ctrl+C 退出")
+    try:
+        sys.stdin.read()
+    except KeyboardInterrupt:
+        pass
+    session.detach()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -1,0 +1,138 @@
+#!/usr/bin/env python3
+# ============================================================
+# 玄鉴 v4.0 Frida POC —— 签名绕过组合套件 (sign_bypass)
+# ============================================================
+# 【功能说明】
+#   Python 宿主 + Frida JS 组合脚本, 定位并拦截请求签名计算过程:
+#   - JS 层 Hook {{ class_name | default("签名工具类") }}.{{ method_name | default("sign") }}
+#     与 StringBuilder.toString / java.lang.String(byte[]) 构造,
+#     输出"签名拼接原文 + 签名结果", 复现签名算法(隐雾技法: MD5签名拼接模式定位);
+#   - Python 层将 拼接原文->签名 结果对写入本地 SQLite, 供离线还原签名规则。
+#
+# 【风险提示】
+#   1. 仅限授权测试; 拼接原文可能含用户口令等敏感字段, 严禁外发(红线 M2);
+#   2. 本脚本只观察签名输入输出, 不篡改签名(篡改属于 M7 限制场景, 需单独授权);
+#   3. 还原出的签名算法仅用于授权范围内的接口安全测试。
+#
+# 【使用方法】
+#   1. 修改下方 PACKAGE_NAME / TARGET_CLASS / TARGET_METHOD;
+#   2. python sign_bypass.py
+# ============================================================
+import json
+import sqlite3
+import sys
+import time
+
+import frida
+
+# ---- 配置区 ----
+PACKAGE_NAME = "{{ package_name | default("com.target.app") }}"
+TARGET_CLASS = "{{ class_name | default("com.target.app.utils.SignUtil") }}"
+TARGET_METHOD = "{{ method_name | default("sign") }}"
+LOG_TAG = "{{ log_tag | default("[fp-sentinel][sign]") }}"
+DB_PATH = "./sign_bypass.db"
+
+JS_HOOK = r"""
+'use strict';
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][sign]") }}';
+Java.perform(function () {
+    // 1) 目标签名方法本体
+    try {
+        var clazz = Java.use('{{ class_name | default("com.target.app.utils.SignUtil") }}');
+        clazz['{{ method_name | default("sign") }}'].overloads.forEach(function (ov) {
+            ov.implementation = function () {
+                var args = [];
+                for (var i = 0; i < arguments.length; i++) {
+                    args.push(String(arguments[i]));
+                }
+                var ret = ov.apply(this, arguments);
+                send({
+                    tag: LOG_TAG, kind: 'sign-method',
+                    cls: '{{ class_name | default("com.target.app.utils.SignUtil") }}',
+                    method: '{{ method_name | default("sign") }}',
+                    args: args, sign: String(ret), ts: Date.now()
+                });
+                return ret;
+            };
+        });
+        console.log(LOG_TAG + ' [+] sign method hooked: {{ class_name | default("com.target.app.utils.SignUtil") }}.{{ method_name | default("sign") }}');
+    } catch (e) {
+        console.log(LOG_TAG + ' [!] sign class not found: ' + e);
+    }
+
+    // 2) StringBuilder.toString: 捕获签名拼接原文(MD5拼接模式定位技法)
+    var SB = Java.use('java.lang.StringBuilder');
+    SB.toString.implementation = function () {
+        var s = this.toString();
+        if (s.length() > 8 && s.indexOf('&') !== -1) {  // 粗筛: 请求参数拼接串特征
+            send({
+                tag: LOG_TAG, kind: 'concat-source',
+                src: String(s), ts: Date.now()
+            });
+        }
+        return s;
+    };
+    console.log(LOG_TAG + ' [✓] sign trace suite installed');
+});
+"""
+
+
+def init_db(db_path: str) -> sqlite3.Connection:
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS sign_trace ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " ts TEXT, kind TEXT, cls TEXT, method TEXT,"
+        " args TEXT, sign TEXT, src TEXT)"
+    )
+    conn.commit()
+    return conn
+
+
+def on_message(message: dict, data) -> None:
+    if message.get("type") != "send":
+        return
+    p = message.get("payload", {})
+    conn = init_db(DB_PATH)
+    conn.execute(
+        "INSERT INTO sign_trace (ts, kind, cls, method, args, sign, src)"
+        " VALUES (?,?,?,?,?,?,?)",
+        (
+            time.strftime("%Y-%m-%d %H:%M:%S"),
+            p.get("kind", ""),
+            p.get("cls", ""),
+            p.get("method", ""),
+            json.dumps(p.get("args", []), ensure_ascii=False),
+            p.get("sign", ""),
+            p.get("src", ""),
+        ),
+    )
+    conn.commit()
+    print(LOG_TAG, "[+]", p.get("kind"), "->", p.get("sign") or p.get("src"))
+
+
+def main() -> int:
+    try:
+        device = frida.get_usb_device(timeout=5)
+    except Exception as exc:
+        print(LOG_TAG, "[!] 未找到 USB 设备(需 root + frida-server):", exc)
+        return 1
+
+    print(LOG_TAG, "[*] spawning", PACKAGE_NAME)
+    pid = device.spawn([PACKAGE_NAME])
+    session = device.attach(pid)
+    script = session.create_script(JS_HOOK)
+    script.on("message", on_message)
+    script.load()
+    device.resume(pid)
+    print(LOG_TAG, "[✓] 签名追踪已注入, 数据写入", DB_PATH, "(仅本地)")
+    try:
+        sys.stdin.read()
+    except KeyboardInterrupt:
+        pass
+    session.detach()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

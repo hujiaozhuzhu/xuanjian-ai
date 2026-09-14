@@ -1,0 +1,56 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— OC 方法替换 (oc_replace)
+ * ============================================================
+ * 【功能说明】
+ *   使用 ObjC.implement 将 {{ oc_class | default("TargetClass") }} 的
+ *   {{ selector | default("+ isEnabled") }} 整体替换为受控实现,
+ *   返回 {{ new_return | default("YES") }}。
+ *   适合: 越狱检测布尔方法 / 授权开关 / 功能开关的绕过验证。
+ *
+ * 【风险提示】
+ *   1. 方法被【完全替换】, 原实现不再执行 —— 仅限授权测试环境;
+ *   2. 返回类型必须与原方法一致, 否则进程崩溃;
+ *   3. 仅验证逻辑缺陷, 禁止任何破坏性用途(红线 M7)。
+ *
+ * 【使用方法】
+ *   按返回类型改写 NEW_RETURN 后:
+ *   frida -U -f {{ bundle_id | default("com.target.iosapp") }} -l oc_replace.js
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][oc_replace]") }}';
+var TARGET_CLASS = '{{ oc_class | default("TargetClass") }}';
+var TARGET_SELECTOR = '{{ selector | default("+ isEnabled") }}';
+// BOOL 方法: true(YES) / false(NO); 对象方法: NULL; 其余类型需自行适配
+var NEW_RETURN = {{ new_return | default("true") }};
+
+if (ObjC.available) {
+    var clazz = ObjC.classes[TARGET_CLASS];
+    if (!clazz) {
+        console.log(LOG_TAG + ' [!] class not found: ' + TARGET_CLASS);
+    } else {
+        var jsName = TARGET_SELECTOR.replace(':', '_') + '_';
+        var method = clazz[jsName] || clazz[TARGET_SELECTOR];
+        if (!method) {
+            console.log(LOG_TAG + ' [!] selector not found: ' + TARGET_SELECTOR);
+        } else {
+            try {
+                Interceptor.revert(method.implementation); // 幂等: 先还原旧 hook
+            } catch (e) { /* 首次安装无需 revert */ }
+
+            try {
+                ObjC.implement(method.implementation, function (self, sel) {
+                    console.log(LOG_TAG + ' [~] ' + TARGET_SELECTOR + ' original replaced, forced: ' + NEW_RETURN);
+                    return NEW_RETURN;
+                });
+                console.log(LOG_TAG + ' [✓] OC replace installed on ' + TARGET_CLASS + ' ' + TARGET_SELECTOR);
+            } catch (e) {
+                console.log(LOG_TAG + ' [!] implement failed (返回类型不匹配?): ' + e);
+            }
+        }
+    }
+} else {
+    console.log(LOG_TAG + ' [!] ObjC runtime unavailable');
+}

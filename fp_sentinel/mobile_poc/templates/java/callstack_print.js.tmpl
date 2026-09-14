@@ -1,0 +1,44 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 调用栈打印 (callstack_print)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }} 并打印完整 Java 调用栈。
+ *   隐雾定位技法核心模板: 知道"哪里被调用"比知道"调用参数"更能快速回溯业务逻辑。
+ *
+ * 【风险提示】
+ *   1. 调用栈打印开销大, 频繁调用的方法请配合过滤条件使用;
+ *   2. 仅限授权测试, 栈信息可能包含业务代码结构, 禁止外发(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l callstack_print.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][callstack]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+
+function printJavaStack(tag) {
+    console.log(Log.getStackTraceString(Throwable.$new()));
+}
+
+Java.perform(function () {
+    var Log = Java.use('android.util.Log');
+    var Throwable = Java.use('java.lang.Throwable');
+
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            console.log(LOG_TAG + ' ══════ ' + TARGET_CLASS + '.' + TARGET_METHOD + ' ══════');
+            for (var i = 0; i < arguments.length; i++) {
+                console.log(LOG_TAG + ' arg[' + i + ']: ' + arguments[i]);
+            }
+            var stack = Log.getStackTraceString(Throwable.$new());
+            console.log(stack);
+            return ov.apply(this, arguments);
+        };
+    });
+    console.log(LOG_TAG + ' [✓] callstack hook installed');
+});

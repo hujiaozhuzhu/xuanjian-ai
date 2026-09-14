@@ -1,0 +1,96 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— Root 检测绕过 (root_bypass)
+ * ============================================================
+ * 【功能说明】
+ *   多层绕过 Android Root 检测: File.exists(su/superuser) / Runtime.exec /
+ *   PackageManager(root工具包名) / System.getProperty / Build tags。
+ *   所有检测点统一返回"未root"结果, 用于授权测试环境下的动态分析放行。
+ *
+ * 【风险提示】
+ *   1. 本脚本会【篡改目标 App 的环境检测逻辑】, 仅限授权测试环境使用;
+ *   2. 仅伪造检测返回值, 不做任何提权/持久化动作(红线 M7);
+ *   3. 若 App 另有 Native 层检测(读 /proc/mounts 等), 需配合 so_hook 扩展。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l root_bypass.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][root_bypass]") }}';
+
+Java.perform(function () {
+
+    // ---- 1. java.io.File.exists: su / busybox / superuser 相关路径一律返回 false ----
+    var File = Java.use('java.io.File');
+    var ROOT_MARKERS = ['su', 'Superuser', 'superuser', 'busybox', 'magisk', 'xposed'];
+    File.exists.implementation = function () {
+        var path = this.getAbsolutePath();
+        for (var i = 0; i < ROOT_MARKERS.length; i++) {
+            if (path.indexOf(ROOT_MARKERS[i]) !== -1) {
+                console.log(LOG_TAG + ' [~] File.exists("' + path + '") -> false (root marker)');
+                return false;
+            }
+        }
+        return this.exists();
+    };
+    console.log(LOG_TAG + ' [+] File.exists root-marker bypass installed');
+
+    // ---- 2. Runtime.exec: 禁止执行 which su / id 等探测命令 ----
+    try {
+        var Runtime = Java.use('java.lang.Runtime');
+        Runtime.exec.overload('java.lang.String').implementation = function (cmd) {
+            if (cmd.indexOf('su') !== -1 || cmd.indexOf('which') !== -1) {
+                console.log(LOG_TAG + ' [~] Runtime.exec("' + cmd + '") blocked');
+                throw Java.use('java.io.IOException').$new('fp-sentinel: exec blocked (root bypass)');
+            }
+            return this.exec(cmd);
+        };
+        console.log(LOG_TAG + ' [+] Runtime.exec probe bypass installed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] Runtime bypass skip: ' + e.message);
+    }
+
+    // ---- 3. PackageManager.getInstalledPackages: 过滤 root 工具包名 ----
+    try {
+        var PM = Java.use('android.app.ApplicationPackageManager');
+        var ROOT_PKGS = ['eu.chainfire.supersu', 'com.topjohnwu.magisk',
+            'de.robv.android.xposed.installer', 'com.devadvance.rootcloak'];
+        PM.getInstalledPackages.overload('int').implementation = function (flags) {
+            var list = this.getInstalledPackages(flags);
+            var filtered = Java.use('java.util.ArrayList').$new();
+            var it = list.iterator();
+            while (it.hasNext()) {
+                var pkg = it.next();
+                var name = pkg.packageName.value;
+                var isRootTool = false;
+                for (var j = 0; j < ROOT_PKGS.length; j++) {
+                    if (name.indexOf(ROOT_PKGS[j]) !== -1) { isRootTool = true; break; }
+                }
+                if (!isRootTool) filtered.add(pkg);
+            }
+            return filtered;
+        };
+        console.log(LOG_TAG + ' [+] PackageManager root-package filter installed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] PackageManager bypass skip: ' + e.message);
+    }
+
+    // ---- 4. System.getProperty / Build tags ----
+    try {
+        var System_ = Java.use('java.lang.System');
+        System_.getProperty.overload('java.lang.String').implementation = function (key) {
+            if (key === 'ro.build.selinux' || key === 'ro.secure') {
+                console.log(LOG_TAG + ' [~] System.getProperty("' + key + '") -> forged');
+                return '1';
+            }
+            return this.getProperty(key);
+        };
+        console.log(LOG_TAG + ' [+] System.getProperty bypass installed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] System.getProperty bypass skip: ' + e.message);
+    }
+
+    console.log(LOG_TAG + ' [✓] root detection bypass suite installed');
+});

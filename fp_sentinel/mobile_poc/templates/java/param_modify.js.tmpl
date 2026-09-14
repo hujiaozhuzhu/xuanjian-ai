@@ -1,0 +1,46 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 参数修改 (param_modify)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }}, 将第 {{ param_index | default("0") }} 个参数
+ *   (类型: {{ param_type | default("自动推断") }}) 替换为受控值后放行,
+ *   用于验证服务端是否信任客户端参数(参数篡改类漏洞验证)。
+ *
+ * 【风险提示】
+ *   1. 本脚本会【修改目标 App 运行时行为】, 仅可在授权测试环境/测试账号使用;
+ *   2. 修改参数可能触发服务端风控或签名校验失败, 属预期现象;
+ *   3. 禁止用于真实交易/他人账号(红线 M7: 仅参数打印/返回值修改类验证)。
+ *
+ * 【使用方法】
+ *   修改下方 REPLACE_VALUE 后:
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l param_modify.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][param_modify]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+var PARAM_INDEX = {{ param_index | default("0") }};
+var REPLACE_VALUE = {{ replace_value | default("'CHANGE_ME'") }};
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            if (arguments.length > PARAM_INDEX) {
+                var original = arguments[PARAM_INDEX];
+                arguments[PARAM_INDEX] = REPLACE_VALUE;
+                console.log(LOG_TAG + ' [~] arg[' + PARAM_INDEX + '] ' + original +
+                    '  ->  ' + REPLACE_VALUE);
+            } else {
+                console.log(LOG_TAG + ' [!] arg index out of range, pass-through');
+            }
+            var ret = ov.apply(this, arguments);
+            console.log(LOG_TAG + ' [<=] return: ' + ret);
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] param-modify hook installed (index=' + PARAM_INDEX + ')');
+});

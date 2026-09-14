@@ -1,0 +1,65 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 字符串转储 (string_dump)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }}, 对 String/byte[]/char[] 参数
+ *   做十六进制 + UTF-8 双视图转储。隐雾定位技法⑥: String→byte[] 是加解密
+ *   入口的必经之路, 在此处转储可拿到加密前明文与解密后明文。
+ *
+ * 【风险提示】
+ *   1. 转储内容可能包含用户敏感数据(密码/Token), 仅限授权测试, 严禁外发(红线 M2);
+ *   2. 大 byte[] 打印会刷屏, 默认截断前 256 字节。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l string_dump.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][string_dump]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+var MAX_DUMP = 256;
+
+function hexdump(bytes, limit) {
+    var out = [];
+    for (var i = 0; i < bytes.length && i < limit; i++) {
+        var b = bytes[i] & 0xff;
+        out.push((b < 16 ? '0' : '') + b.toString(16));
+    }
+    return out.join(' ');
+}
+
+function dumpValue(tag, v) {
+    if (v === null || v === undefined) {
+        console.log(LOG_TAG + ' ' + tag + ': <null>');
+    } else if (typeof v === 'object' && v.length !== undefined) {
+        try {
+            var bytes = Java.array('byte', v);
+            console.log(LOG_TAG + ' ' + tag + ' byte[' + bytes.length + '] hex: ' + hexdump(bytes, MAX_DUMP));
+            var str = Java.use('java.lang.String').$new(bytes, 'UTF-8');
+            console.log(LOG_TAG + ' ' + tag + ' utf8: ' + str);
+        } catch (e) {
+            console.log(LOG_TAG + ' ' + tag + ' <array:' + e + '>');
+        }
+    } else {
+        console.log(LOG_TAG + ' ' + tag + ': ' + v);
+    }
+}
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            console.log(LOG_TAG + ' ──── ' + TARGET_CLASS + '.' + TARGET_METHOD + ' ────');
+            for (var i = 0; i < arguments.length; i++) {
+                dumpValue('arg[' + i + ']', arguments[i]);
+            }
+            var ret = ov.apply(this, arguments);
+            dumpValue('return', ret);
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] string-dump hook installed');
+});

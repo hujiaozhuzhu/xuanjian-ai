@@ -1,0 +1,54 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— Inline Hook (inline_hook)
+ * ============================================================
+ * 【功能说明】
+ *   对 {{ so_name | default("libtarget.so") }} 基址 + {{ offset | default("0x1A2B3C") }}
+ *   做指令级 Inline Hook(基于 Frida Interceptor 任意地址 attach)。
+ *   用于: 无导出符号的静态注册 JNI 函数 / so 内部核心算法函数定位。
+ *
+ * 【风险提示】
+ *   1. 偏移量必须来自静态分析(IDA/Ghidra)确认, 错误偏移会直接导致进程崩溃;
+ *   2. 目标若开启完整性校验/指令校验, Inline Hook 可能被检测(属预期对抗场景);
+ *   3. 仅限授权测试(红线 M7)。
+ *
+ * 【使用方法】
+ *   确认 offset 后:
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l inline_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][inline_hook]") }}';
+var SO_NAME = '{{ so_name | default("libtarget.so") }}';
+var OFFSET = {{ offset | default("0x1A2B3C") }};
+
+function waitAndHook() {
+    var base = Module.findBaseAddress(SO_NAME);
+    if (!base) {
+        console.log(LOG_TAG + ' [i] waiting for ' + SO_NAME + ' ...');
+        setTimeout(waitAndHook, 200);
+        return;
+    }
+    var target = base.add(OFFSET);
+    console.log(LOG_TAG + ' [i] base=' + base + ' target=' + target);
+
+    Interceptor.attach(target, {
+        onEnter: function (args) {
+            console.log(LOG_TAG + ' [+] inline hook hit @' + SO_NAME + '+' + OFFSET);
+            // 按 IDA/Ghidra 确认的调用约定打印寄存器(ARM64: x0-x7)
+            console.log(LOG_TAG + '     x0=' + this.context.x0 + ' x1=' + this.context.x1 +
+                ' x2=' + this.context.x2);
+            this.retBuf = null; // 若函数写出参缓冲区, 在此记录指针
+        },
+        onLeave: function (retval) {
+            console.log(LOG_TAG + ' [<=] ret: ' + retval);
+            if (this.retBuf) {
+                console.log(LOG_TAG + ' [<=] out-buf: ' + this.retBuf.readByteArray(32));
+            }
+        }
+    });
+    console.log(LOG_TAG + ' [✓] inline hook installed @ ' + SO_NAME + '+' + OFFSET);
+}
+
+waitAndHook();

@@ -1,0 +1,60 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 基础方法 Hook (basic_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook 目标类的 {{ method_name }} 方法, 打印全部入参与返回值,
+ *   用于定位业务逻辑入口 / 观察数据流(只读, 不修改任何返回值)。
+ *
+ * 【风险提示】
+ *   1. 本脚本仅用于授权范围内的安全测试与教学复现;
+ *   2. Hook 数据仅打印到本机控制台, 严禁外发(红线 M2);
+ *   3. 高频调用方法可能产生大量日志, 注意控制台性能。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l basic_hook.js --no-pause
+ *   或: frida -U {{ package_name | default("com.target.app") }} -l basic_hook.js
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][basic_hook]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+
+Java.perform(function () {
+    var clazz = null;
+    try {
+        clazz = Java.use(TARGET_CLASS);
+    } catch (e) {
+        console.log(LOG_TAG + ' [!] class not found: ' + TARGET_CLASS + ' -> ' + e);
+        return;
+    }
+
+    var overloads = clazz[TARGET_METHOD].overloads;
+    console.log(LOG_TAG + ' [*] hooking ' + TARGET_CLASS + '.' + TARGET_METHOD +
+        ' (' + overloads.length + ' overload(s))');
+
+    overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) {
+                try {
+                    args.push('arg' + i + '=' + arguments[i]);
+                } catch (e) {
+                    args.push('arg' + i + '=<unprintable>');
+                }
+            }
+            console.log(LOG_TAG + ' [+] ' + TARGET_METHOD + ' called: ' + args.join(', '));
+
+            var ret = this[TARGET_METHOD].apply(this, arguments);
+            try {
+                console.log(LOG_TAG + ' [<=] return: ' + ret);
+            } catch (e) {
+                console.log(LOG_TAG + ' [<=] return: <unprintable>');
+            }
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] basic hook installed');
+});

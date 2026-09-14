@@ -1,0 +1,40 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 静态方法 Hook (static_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }} 的静态方法 {{ method_name }}。
+ *   静态方法是加解密工具类/签名工具类的常见形态, 无需实例即可观察全局调用。
+ *
+ * 【风险提示】
+ *   1. 仅限授权测试; 工具类静态方法被全局 Hook 后, 其它业务调用也会被打印;
+ *   2. 数据仅本地打印, 禁止外发(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l static_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][static_hook]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            var args = [];
+            for (var i = 0; i < arguments.length; i++) {
+                var v = arguments[i];
+                args.push(typeof v === 'object' ? JSON.stringify(v) : String(v));
+            }
+            console.log(LOG_TAG + ' [+] static ' + TARGET_CLASS + '.' + TARGET_METHOD +
+                '(' + args.join(', ') + ')');
+            var ret = ov.apply(this, arguments);
+            console.log(LOG_TAG + ' [<=] ' + ret);
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] static hook installed');
+});

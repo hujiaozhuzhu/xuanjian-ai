@@ -1,0 +1,287 @@
+"""算法安全规则(15 条) —— 加密算法弱化/误用识别与 Hook 定位提示。"""
+
+from __future__ import annotations
+
+from ..core.engine import Rule
+from ..models.insight import DifficultyLevel, InsightCategory, Severity
+from .context_filters import has_crypto_key_material
+
+_CAT = InsightCategory.CRYPTO
+_REF_MSTG = ["https://mas.owasp.org/MASVS/05-masvs-maswe/"]
+
+RULES = [
+    Rule(
+        id="CR-001",
+        title="AES/ECB 模式(确定性加密泄露模式信息)",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.95,
+        patterns=[r"AES/ECB/", r"Cipher\.getInstance\(\s*['\"]AES['\"]"],
+        description="检测到 AES 使用 ECB 模式或未显式指定安全模式。ECB 对相同明文块产生相同密文块, 泄露数据模式。",
+        technical_context="Hook javax.crypto.Cipher.getInstance() 可确认运行时实际使用的 transformation 参数。",
+        suggested_technique="basic-hook(Cipher.getInstance)",
+        next_steps=[
+            "Hook javax.crypto.Cipher.getInstance 打印 transformation 实参",
+            "结合 string-dump 模板抓取 Cipher.doFinal 前后明密文对",
+            "修复: 改用 CBC/GCM 模式并随机 IV",
+        ],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+        auto_fixable=False,
+        fix_hint="Cipher.getInstance(\"AES/GCM/NoPadding\") 并使用 SecureRandom 生成 IV",
+    ),
+    Rule(
+        id="CR-002",
+        title="DES/3DES 弱对称算法",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.95,
+        patterns=[r"\bDES/", r"\bDESede/", r"Blowfish"],
+        description="检测到 DES/3DES/Blowfish 等已被证明不安全的对称算法。",
+        technical_context="56 位 DES 可被暴力破解; 3DES 已被 NIST 弃用(2023)。",
+        suggested_technique="basic-hook(SecretKeySpec 构造)",
+        next_steps=[
+            "Hook javax.crypto.spec.DESKeySpec 观察密钥来源",
+            "修复: 迁移到 AES-256-GCM",
+        ],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+        fix_hint="统一替换为 AES/GCM/NoPadding, 密钥长度 >= 256 位",
+    ),
+    Rule(
+        id="CR-003",
+        title="RC4 流密码",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.9,
+        patterns=[r"\bRC4\b", r"ARC4", r"ARCFOUR"],
+        description="检测到 RC4 流密码, 存在已知偏差攻击且在 TLS 中已全面禁用。",
+        technical_context="常见于旧协议兼容代码或自定义混淆; Hook Cipher.getInstance 捕获调用点。",
+        suggested_technique="callstack-trace(Cipher.getInstance)",
+        next_steps=["定位调用栈确认业务场景", "修复: 替换为 AES-GCM"],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-004",
+        title="MD5 哈希用于安全场景",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.9,
+        patterns=[r"MessageDigest\.getInstance\(\s*['\"]MD5['\"]", r"\bMD5Util", r"md5\.digest"],
+        description="检测到 MD5。MD5 存在碰撞攻击, 不得用于签名/口令存储/完整性校验。",
+        technical_context="MD5 常见于请求签名拼接; 结合 sign-bypass 组合模板可还原拼接原文。",
+        suggested_technique="sign-bypass",
+        next_steps=[
+            "Hook java.security.MessageDigest.digest 捕获哈希输入",
+            "确认 MD5 用途(请求签名/口令/校验)后评估风险",
+            "修复: 签名场景改 HMAC-SHA256, 口令存储改 bcrypt/PBKDF2",
+        ],
+        cwe_ids=["CWE-328"],
+        masvs_refs=["MASVS-CRYPTO-2"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-005",
+        title="SHA-1 哈希用于安全场景",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.9,
+        patterns=[r"MessageDigest\.getInstance\(\s*['\"]SHA-?1['\"]", r"\bSHA1Util"],
+        description="检测到 SHA-1。SHA-1 已被证明可选择前缀碰撞, 不应用于安全目的。",
+        technical_context="Hook MessageDigest.getInstance 观察算法参数与调用来源。",
+        suggested_technique="basic-hook(MessageDigest)",
+        next_steps=["评估使用场景", "修复: 迁移到 SHA-256 及以上"],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-2"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-006",
+        title="口令哈希未加盐/慢哈希",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.75,
+        patterns=[r"MessageDigest", r"\bMD5\b|\bSHA-?256\b"],
+        check=lambda ctx: (
+            [e for e in ctx.find_evidence(r"password|passwd|pwd", limit=3)
+             if ctx.has_signal(r"MessageDigest")] or []
+        ),
+        description="口令相关代码路径出现通用哈希调用, 疑似未使用加盐慢哈希(bcrypt/scrypt/PBKDF2)。",
+        technical_context="需结合反编译确认哈希输入是否为口令; 若是, 彩虹表/GPU 爆破风险高。",
+        suggested_technique="string-dump(MessageDigest.digest)",
+        next_steps=["Hook digest 输入确认是否为口令", "修复: 改用 PBKDF2WithHmacSHA256(>=10万次迭代)"],
+        cwe_ids=["CWE-916"],
+        masvs_refs=["MASVS-CRYPTO-2"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-007",
+        title="硬编码加密密钥(SecretKeySpec 常量)",
+        category=_CAT,
+        severity=Severity.CRITICAL,
+        confidence=0.85,
+        patterns=[r"SecretKeySpec", r"javax\.crypto\.spec\.SecretKeySpec"],
+        check=lambda ctx: (
+            ctx.find_evidence(r"SecretKeySpec", limit=3)
+            if ctx.has_signal(r"SecretKeySpec")
+            and has_crypto_key_material(ctx)
+            else []
+        ),
+        description="检测到 SecretKeySpec 使用且伴随疑似硬编码密钥字符串(赋值形态或 AES 上下文下的密钥素材), 静态即可提取密钥。",
+        technical_context="从反编译字符串表中搜索高熵常量即可还原密钥; 用 string-dump 模板可在运行时验证。",
+        suggested_technique="string-dump(SecretKeySpec)",
+        next_steps=[
+            "在反编译源码中搜索 SecretKeySpec 构造点的字符串常量",
+            "运行时用 string-dump 抓取密钥字节佐证",
+            "修复: 密钥改由 Android Keystore / 服务端下发",
+        ],
+        cwe_ids=["CWE-321", "CWE-798"],
+        masvs_refs=["MASVS-CRYPTO-1", "MASVS-STORAGE-1"],
+        references=_REF_MSTG,
+        auto_fixable=False,
+    ),
+    Rule(
+        id="CR-008",
+        title="硬编码 IV(初始化向量)",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.85,
+        patterns=[r"IvParameterSpec"],
+        check=lambda ctx: (
+            ctx.find_evidence(r"IvParameterSpec", limit=3)
+            if ctx.has_signal(r"(iv|IV).{0,30}['\"][0-9a-fA-F]{8,}['\"]")
+            else []
+        ),
+        description="检测到 IvParameterSpec 且伴随疑似固定 IV 字符串, 固定 IV 使 CBC/CTR 模式可预测。",
+        technical_context="Hook IvParameterSpec 构造函数打印 IV 字节, 两次运行对比确认是否固定。",
+        suggested_technique="bytearray-print(IvParameterSpec)",
+        next_steps=["Hook 构造函数确认 IV 是否固定", "修复: 每次加密随机 IV 并随密文传输"],
+        cwe_ids=["CWE-329"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-009",
+        title="RSA 使用 ECB 填充或过短密钥",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.8,
+        patterns=[r"RSA/ECB/", r"Cipher\.getInstance\(\s*['\"]RSA['\"]", r"RSA/NONE/"],
+        description="检测到 RSA 默认(ECB 等价)填充或显式 ECB 标记; 默认填充存在 Bleichenbacher 风险面。",
+        technical_context="Hook Cipher.getInstance 捕获 transformation; 检查 KeyPairGenerator 密钥长度。",
+        suggested_technique="basic-hook(Cipher.getInstance)",
+        next_steps=["确认 RSA 密钥长度 >= 2048", "修复: 使用 OAEPWithSHA-256AndMGF1Padding"],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-010",
+        title="java.util.Random 用于密钥/令牌生成",
+        category=_CAT,
+        severity=Severity.HIGH,
+        confidence=0.85,
+        patterns=[r"java\.util\.Random", r"new\s+Random\("],
+        check=lambda ctx: (
+            ctx.find_evidence(r"new Random", limit=3)
+            if ctx.has_signal(r"(token|nonce|salt|secret|key)")
+            else []
+        ),
+        description="检测到 java.util.Random 且上下文存在 token/nonce/salt 关键词, 线性同余生成器可预测。",
+        technical_context="Hook java.util.Random.<init> 与 .next 系列方法确认调用场景。",
+        suggested_technique="callstack-trace(Random)",
+        next_steps=["确认随机数用途", "修复: 改用 java.security.SecureRandom"],
+        cwe_ids=["CWE-330"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-011",
+        title="Base64 伪装加密",
+        category=_CAT,
+        severity=Severity.LOW,
+        confidence=0.7,
+        patterns=[r"android\.util\.Base64", r"java\.util\.Base64"],
+        check=lambda ctx: (
+            ctx.find_evidence(r"Base64", limit=3)
+            if ctx.has_signal(r"(password|token|secret|credential)")
+            else []
+        ),
+        description="敏感字段(password/token/secret)与 Base64 编解码同时出现, 疑似以 Base64 冒充加密。",
+        technical_context="Base64 是编码不是加密; 结合 string-dump 模板验证编码对象是否为敏感数据。",
+        suggested_technique="string-dump(Base64.encode)",
+        next_steps=["确认 Base64 对象内容", "修复: 改用真正的加密方案(Keystore + AES-GCM)"],
+        cwe_ids=["CWE-656"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-012",
+        title="自定义 XOR 异或加密",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.7,
+        patterns=[r"\bxor\b", r"\^=?.{0,10}key", r"\bXorUtil|\bXORUtil"],
+        description="检测到疑似自定义 XOR 加密实现, 已知密文任意两段异或即可消除密钥, 强度极弱。",
+        technical_context="常见于加固壳或简单混淆; 用 bytearray-print 模板观察输入输出位模式。",
+        suggested_technique="bytearray-print(XOR 函数)",
+        next_steps=["定位 XOR 函数与密钥", "已知明文对即可恢复密钥流"],
+        cwe_ids=["CWE-327"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-013",
+        title="加密未做完整性校验(缺 MAC/AEAD)",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.7,
+        patterns=[r"AES/CBC/", r"AES/CTR/"],
+        description="检测到 CBC/CTR 模式但没有伴随 HMAC/GCM 标签, 密文可被篡改(padding oracle / bit-flipping)。",
+        technical_context="Hook Cipher.getInstance 确认模式; 搜索 Mac/HMAC 类是否存在配套使用。",
+        suggested_technique="basic-hook(Cipher/Mac)",
+        next_steps=["确认是否存在 Encrypt-then-MAC", "修复: 改用 GCM 或先加密后 HMAC"],
+        cwe_ids=["CWE-353"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-014",
+        title="HMAC 用于签名校验(密钥可提取)",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.7,
+        patterns=[r"Mac\.getInstance", r"HmacSHA", r"HmacMD5"],
+        description="检测到 HMAC 签名计算。若密钥硬编码在客户端, 攻击者可离线伪造签名。",
+        technical_context="Hook Mac.init 观察 SecretKey 来源; 结合 sign-bypass 组合模板输出拼接原文与签名对。",
+        suggested_technique="sign-bypass",
+        next_steps=["确认 HMAC 密钥来源", "若为硬编码: 评估接口重放/伪造风险"],
+        cwe_ids=["CWE-347"],
+        masvs_refs=["MASVS-CRYPTO-2"],
+        references=_REF_MSTG,
+    ),
+    Rule(
+        id="CR-015",
+        title="MessageDigest 生成会话令牌",
+        category=_CAT,
+        severity=Severity.MEDIUM,
+        confidence=0.7,
+        patterns=[r"MessageDigest"],
+        check=lambda ctx: (
+            ctx.find_evidence(r"MessageDigest", limit=3)
+            if ctx.has_signal(r"(sessionid|session_id|token|uuid)")
+            else []
+        ),
+        description="哈希函数与会话令牌相关词同时出现, 疑似以可预测输入生成会话标识。",
+        technical_context="令牌必须来自 CSPRNG; Hook MessageDigest 输入确认令牌组成。",
+        suggested_technique="callstack-trace(MessageDigest)",
+        next_steps=["确认令牌生成逻辑", "修复: 改用 SecureRandom 生成 128 位以上随机令牌"],
+        cwe_ids=["CWE-330"],
+        masvs_refs=["MASVS-CRYPTO-1"],
+        references=_REF_MSTG,
+    ),
+]

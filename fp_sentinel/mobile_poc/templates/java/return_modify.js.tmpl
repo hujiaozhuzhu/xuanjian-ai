@@ -1,0 +1,38 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 返回值修改 (return_modify)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }}, 将返回值替换为受控值,
+ *   用于验证: 本地鉴权开关/VIP状态/root检测/签名校验等布尔逻辑是否可被绕过。
+ *
+ * 【风险提示】
+ *   1. 本脚本会【修改目标 App 运行时行为】, 仅限授权测试环境使用;
+ *   2. 强制返回值可能引发 App 状态不一致甚至崩溃;
+ *   3. 仅验证逻辑缺陷, 禁止用于任何获利或破坏行为(红线 M7)。
+ *
+ * 【使用方法】
+ *   按方法返回类型设置 NEW_RETURN (布尔: true/false, 字符串: '"..."', 对象: null):
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l return_modify.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][return_modify]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+// 按返回类型修改: boolean -> true/false; int -> 1; String -> "OK"; 对象 -> null
+var NEW_RETURN = {{ new_return | default("true") }};
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            var ret = ov.apply(this, arguments);
+            console.log(LOG_TAG + ' [~] ' + TARGET_METHOD + ' original return: ' + ret +
+                '  ->  forced: ' + NEW_RETURN);
+            return NEW_RETURN;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] return-modify hook installed on ' + TARGET_CLASS + '.' + TARGET_METHOD);
+});

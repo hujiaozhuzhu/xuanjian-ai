@@ -1,0 +1,64 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— OC 方法 Hook (oc_basic)
+ * ============================================================
+ * 【功能说明】
+ *   Hook iOS 目标类 {{ oc_class | default("TargetClass") }} 的
+ *   {{ selector | default("- doSomething:") }} 方法, 打印全部 ObjC 参数与返回值,
+ *   用于 iOS 业务逻辑定位与数据流观察(只读)。
+ *
+ * 【风险提示】
+ *   1. 需已越狱设备 + frida-server; 仅限授权测试;
+ *   2. 数据仅本地打印, 禁止外发(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ bundle_id | default("com.target.iosapp") }} -l oc_basic.js
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][oc_basic]") }}';
+var TARGET_CLASS = '{{ oc_class | default("TargetClass") }}';
+var TARGET_SELECTOR = '{{ selector | default("- doSomething:") }}';
+
+if (ObjC.available) {
+    var clazz = ObjC.classes[TARGET_CLASS];
+    if (!clazz) {
+        console.log(LOG_TAG + ' [!] class not found: ' + TARGET_CLASS);
+    } else {
+        var method = clazz[TARGET_SELECTOR.replace(':', '_') + '_'] ||
+                     clazz[TARGET_SELECTOR];
+        if (!method) {
+            console.log(LOG_TAG + ' [!] selector not found: ' + TARGET_SELECTOR);
+            console.log(LOG_TAG + ' [i] available methods:');
+            clazz.$ownMethods.forEach(function (m) {
+                console.log(LOG_TAG + '     ' + m);
+            });
+        } else {
+            Interceptor.attach(method.implementation, {
+                onEnter: function (args) {
+                    console.log(LOG_TAG + ' [+] ' + TARGET_SELECTOR + ' called');
+                    console.log(LOG_TAG + '     self: ' + this.self);
+                    for (var i = 2; i < args.length; i++) {
+                        try {
+                            console.log(LOG_TAG + '     arg[' + (i - 2) + ']: ' +
+                                new ObjC.Object(args[i]));
+                        } catch (e) {
+                            console.log(LOG_TAG + '     arg[' + (i - 2) + ']: <raw ' + args[i] + '>');
+                        }
+                    }
+                },
+                onLeave: function (retval) {
+                    try {
+                        console.log(LOG_TAG + ' [<=] ret: ' + new ObjC.Object(retval));
+                    } catch (e) {
+                        console.log(LOG_TAG + ' [<=] ret(raw): ' + retval);
+                    }
+                }
+            });
+            console.log(LOG_TAG + ' [✓] OC hook installed on ' + TARGET_CLASS + ' ' + TARGET_SELECTOR);
+        }
+    }
+} else {
+    console.log(LOG_TAG + ' [!] ObjC runtime unavailable (need jailbroken iOS device)');
+}

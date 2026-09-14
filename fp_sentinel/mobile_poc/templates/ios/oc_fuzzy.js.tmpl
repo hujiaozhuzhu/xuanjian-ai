@@ -1,0 +1,56 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— OC 模糊匹配 Hook (oc_fuzzy)
+ * ============================================================
+ * 【功能说明】
+ *   在全部已加载 ObjC 类中按正则 {{ pattern | default(".*(crypt|encrypt|sign).*") }}
+ *   模糊匹配类名/方法名并逐个挂 Hook。适合: 类名被混淆、无法精确定位目标时的
+ *   广撒网侦察(隐雾技法①关键字定位的 iOS 动态版)。
+ *
+ * 【风险提示】
+ *   1. 全量模糊 Hook 会显著拖慢目标进程, 命中过多时建议收窄正则;
+ *   2. 侦察输出包含 App 内部结构, 仅限授权测试, 严禁外发(红线 M2)。
+ *
+ * 【使用方法】
+ *   修改下方 PATTERN 后:
+ *   frida -U -f {{ bundle_id | default("com.target.iosapp") }} -l oc_fuzzy.js
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][oc_fuzzy]") }}';
+// 模糊匹配正则: 类名与方法名各一个, 逗号分隔
+var PATTERN = '{{ pattern | default(".*(crypt|encrypt|sign).*") }}';
+
+if (ObjC.available) {
+    var re = new RegExp(PATTERN);
+    var hitCount = 0;
+
+    for (var className in ObjC.classes) {
+        if (!re.test(className)) continue;
+        var clazz = ObjC.classes[className];
+        var methods = clazz.$ownMethods;
+        var hooked = 0;
+        methods.forEach(function (m) {
+            if (!re.test(m)) return;
+            try {
+                var impl = clazz[m].implementation;
+                Interceptor.attach(impl, {
+                    onEnter: function (args) {
+                        console.log(LOG_TAG + ' [+] ' + className + ' ' + m + ' called');
+                    }
+                });
+                hooked++;
+                hitCount++;
+            } catch (e) {
+                // 部分 C 方法/变参方法无法 attach, 跳过
+            }
+        });
+        if (hooked > 0) {
+            console.log(LOG_TAG + ' [i] class ' + className + ' hooked ' + hooked + ' method(s)');
+        }
+    }
+    console.log(LOG_TAG + ' [✓] fuzzy hook done, total ' + hitCount + ' method(s)');
+} else {
+    console.log(LOG_TAG + ' [!] ObjC runtime unavailable');
+}

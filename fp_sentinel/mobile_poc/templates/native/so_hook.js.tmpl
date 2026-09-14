@@ -1,0 +1,64 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— .so 函数 Hook (so_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook Native 库 {{ so_name | default("libtarget.so") }} 的导出函数
+ *   {{ function_name | default("Java_com_target_App_nativeEncrypt") }},
+ *   打印入参缓冲区与返回值(HEX 视图)。用于 JNI 层加解密定位。
+ *
+ * 【风险提示】
+ *   1. Native Hook 需要库已加载, 建议配合 spawn 模式等待 so 加载完成;
+ *   2. 仅限授权测试; 数据仅本地打印(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l so_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][so_hook]") }}';
+var SO_NAME = '{{ so_name | default("libtarget.so") }}';
+var FUNC_NAME = '{{ function_name | default("Java_com_target_App_nativeEncrypt") }}';
+var MAX_HEX = 256;
+
+function hexdump(ptrValue, len) {
+    var out = [];
+    for (var i = 0; i < len && i < MAX_HEX; i++) {
+        var b = ptrValue.add(i).readU8();
+        out.push((b < 16 ? '0' : '') + b.toString(16));
+    }
+    return out.join(' ');
+}
+
+function waitAndHook() {
+    var base = Module.findBaseAddress(SO_NAME);
+    if (!base) {
+        console.log(LOG_TAG + ' [i] waiting for ' + SO_NAME + ' ...');
+        setTimeout(waitAndHook, 200);
+        return;
+    }
+    var addr = Module.findExportByName(SO_NAME, FUNC_NAME);
+    if (!addr) {
+        console.log(LOG_TAG + ' [!] export not found: ' + FUNC_NAME +
+            ' (可用 Module.enumerateExports 查询真实符号)');
+        return;
+    }
+    Interceptor.attach(addr, {
+        onEnter: function (args) {
+            this.arg0 = args[0];
+            console.log(LOG_TAG + ' [+] ' + FUNC_NAME + ' called');
+            // 常见 JNI 签名: (JNIEnv*, jclass/jobject, byte[] data, int len)
+            // arg2 是 jbyteArray 时尝试读长度: (*(env))->GetArrayLength 需手动调用,
+            // 此处简化为打印原始指针, 明细请在 IDA/Ghidra 确认后调整下标。
+            console.log(LOG_TAG + '     arg[2] ptr: ' + args[2]);
+        },
+        onLeave: function (retval) {
+            console.log(LOG_TAG + ' [<=] ret: ' + retval);
+        }
+    });
+    console.log(LOG_TAG + ' [✓] native hook installed: ' + SO_NAME + '!' + FUNC_NAME +
+        ' @ ' + addr);
+}
+
+waitAndHook();

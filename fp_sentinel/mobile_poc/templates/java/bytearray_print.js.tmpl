@@ -1,0 +1,67 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 字节数组打印 (bytearray_print)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }}, 专门针对 byte[] 入参/返回值做
+ *   长度+HEX+可读文本三视图打印, 对齐隐雾定位技法⑥(String转byte[]定位),
+ *   适合捕捉 Cipher.doFinal / MessageDigest.digest 等加解密边界数据。
+ *
+ * 【风险提示】
+ *   1. 可捕捉到加密前明文, 含敏感数据, 仅限授权测试且严禁外发(红线 M2);
+ *   2. 高频加解密调用会产生大量输出, 必要时加长度过滤。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l bytearray_print.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][bytearray]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+var MAX_HEX = 256;
+
+function toHex(arr) {
+    var s = '';
+    for (var i = 0; i < arr.length && i < MAX_HEX; i++) {
+        var b = arr[i] & 0xff;
+        s += (b < 16 ? '0' : '') + b.toString(16) + ' ';
+    }
+    if (arr.length > MAX_HEX) s += '...(truncated ' + arr.length + ' total)';
+    return s.trim();
+}
+
+function tryBytes(v) {
+    try {
+        return Java.array('byte', v);
+    } catch (e) {
+        return null;
+    }
+}
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            for (var i = 0; i < arguments.length; i++) {
+                var bytes = tryBytes(arguments[i]);
+                if (bytes) {
+                    console.log(LOG_TAG + ' arg[' + i + '] len=' + bytes.length +
+                        ' hex=' + toHex(bytes));
+                    try {
+                        console.log(LOG_TAG + ' arg[' + i + '] text=' +
+                            Java.use('java.lang.String').$new(bytes, 'UTF-8'));
+                    } catch (e) { /* 非 UTF-8 文本, 忽略 */ }
+                }
+            }
+            var ret = ov.apply(this, arguments);
+            var retBytes = tryBytes(ret);
+            if (retBytes) {
+                console.log(LOG_TAG + ' return len=' + retBytes.length + ' hex=' + toHex(retBytes));
+            }
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] bytearray hook installed on ' + TARGET_CLASS + '.' + TARGET_METHOD);
+});

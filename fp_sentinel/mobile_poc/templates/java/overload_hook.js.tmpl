@@ -1,0 +1,59 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— 重载方法 Hook (overload_hook)
+ * ============================================================
+ * 【功能说明】
+ *   精确 Hook 目标方法指定重载签名(参数类型: {{ param_types | join(", ") | default("自动枚举全部重载") }}),
+ *   打印入参、返回值与调用时间戳, 便于区分同名重载的真实调用路径。
+ *
+ * 【风险提示】
+ *   1. 仅限授权测试使用; 重载签名填错会导致 hook 不生效(脚本会列出可选签名);
+ *   2. 输出数据仅本地打印, 禁止网络外发(红线 M2)。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l overload_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][overload_hook]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+var TARGET_OVERLOAD = [{{ param_types | join(", ") | default("") }}];
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    var method = clazz[TARGET_METHOD];
+    var sigs = method.overloads.map(function (ov) {
+        return ov.argumentTypes.map(function (t) { return t.className; }).join(', ');
+    });
+    console.log(LOG_TAG + ' [*] available overloads of ' + TARGET_METHOD + ':');
+    sigs.forEach(function (s, idx) {
+        console.log(LOG_TAG + '     [' + idx + '] (' + s + ')');
+    });
+
+    var target = null;
+    if (TARGET_OVERLOAD.length > 0) {
+        target = clazz[TARGET_METHOD].overload.apply(clazz[TARGET_METHOD], TARGET_OVERLOAD);
+    }
+
+    var hookOne = function (ov) {
+        ov.implementation = function () {
+            console.log(LOG_TAG + ' [' + new Date().toISOString() + '] ' + TARGET_METHOD +
+                '(' + ov.argumentTypes.map(function (t) { return t.className; }).join(', ') + ') called');
+            for (var i = 0; i < arguments.length; i++) {
+                console.log(LOG_TAG + '   arg[' + i + ']: ' + arguments[i]);
+            }
+            var ret = ov.apply(this, arguments);
+            console.log(LOG_TAG + '   return: ' + ret);
+            return ret;
+        };
+    };
+
+    if (target) {
+        hookOne(target);
+    } else {
+        clazz[TARGET_METHOD].overloads.forEach(hookOne);
+    }
+    console.log(LOG_TAG + ' [✓] overload hook installed');
+});

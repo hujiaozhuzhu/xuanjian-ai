@@ -31,6 +31,59 @@ app = typer.Typer(
     add_completion=False,
 )
 
+# ── mobile 能力组（玄鉴 v4.0：mobile hook / shell / decompile 统一聚合） ──
+# 注：v4.0 各子引擎（hook/shell/decompile）的子命令统一挂载到同一个 "mobile"
+# 组下；若各自重复 add_typer(name="mobile")，typer 构建 commands dict 时会
+# 后者覆盖前者，导致先注册的子命令（如 mobile hook）不可达。故此处聚合。
+_v4_mobile_app = typer.Typer(name="mobile", help="移动端安全分析 (v4.0): 砸壳/反编译/Hook定位", no_args_is_help=True)
+
+try:  # 可选依赖缺失时不影响主 CLI 其它命令
+    from ..mobile_hook.cli import hook_app as _mobile_hook_app
+
+    _v4_mobile_app.add_typer(_mobile_hook_app, name="hook")
+except Exception as _mobile_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_hook CLI 注册失败: %s", _mobile_err)
+
+try:
+    from ..mobile_shell.cli import shell_app as _mobile_shell_app
+
+    _v4_mobile_app.add_typer(_mobile_shell_app, name="shell")
+except Exception as _mobile_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_shell CLI 注册失败: %s", _mobile_err)
+
+try:
+    from ..mobile_decompile.cli import decompile_app as _mobile_decompile_app
+
+    _v4_mobile_app.add_typer(_mobile_decompile_app, name="decompile")
+except Exception as _mobile_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_decompile CLI 注册失败: %s", _mobile_err)
+
+try:
+    from ..mobile_poc.cli import poc_app as _mobile_poc_app
+
+    _v4_mobile_app.add_typer(_mobile_poc_app, name="poc")
+except Exception as _mobile_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_poc CLI 注册失败: %s", _mobile_err)
+
+try:
+    from ..mobile_insight.cli import insight_app as _mobile_insight_app
+
+    _v4_mobile_app.add_typer(_mobile_insight_app, name="insight")
+except Exception as _mobile_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_insight CLI 注册失败: %s", _mobile_err)
+
+app.add_typer(_v4_mobile_app, name="mobile")
+
 @app.command("mcp")
 def mcp(
     transport: str = typer.Option("stdio", "--transport", help="传输方式 (stdio/sse)"),
@@ -107,9 +160,28 @@ except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
     pass
 
 # 注册自适应误报优化引擎 v3.0 子命令
+# 注：fp_optimize_commands 是纯 click.Group；typer>=0.12 构建 Group 树时无法
+# 遍历 click.Group 子应用（AttributeError: 'Group' object has no attribute
+# 'registered_commands'），导致整个主 CLI 崩溃。这里用 typer shim 转发参数。
 try:
-    from .fp_optimize_commands import fp_optimize as fp_optimize_app
-    app.add_typer(fp_optimize_app, name="fp", help="自适应误报引擎 (v3.0): 反馈收集 / 自动优化 / 代码风格画像 / 误报统计")
+    from .fp_optimize_commands import fp_optimize as _fp_optimize_group
+
+    _fp_shim = typer.Typer(
+        name="fp",
+        help="自适应误报引擎 (v3.0): 反馈收集 / 自动优化 / 代码风格画像 / 误报统计",
+        invoke_without_command=True,
+        add_completion=False,
+        context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+    )
+
+    @_fp_shim.callback(invoke_without_command=True)
+    def _fp_shim_callback(ctx: typer.Context) -> None:
+        """转发到 fp-optimize (click) 引擎。"""
+        _fp_optimize_group.main(
+            args=list(ctx.args or []), prog_name="fp-sentinel fp", standalone_mode=True
+        )
+
+    app.add_typer(_fp_shim, name="fp")
 except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
     pass
 

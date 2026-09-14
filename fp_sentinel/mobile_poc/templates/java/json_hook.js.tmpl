@@ -1,0 +1,79 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— JSON 序列化 Hook (json_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook org.json 体系(JSONObject/JSONArray)与 {{ target_class | default("org.json.JSONObject") }},
+ *   打印全部 put/toString/构造数据。隐雾定位技法⑤: API 数据加解密的定位捷径 ——
+ *   请求/响应在 JSON 边界必为明文, 拿到 JSON 即拿到业务明文。
+ *
+ * 【风险提示】
+ *   1. JSON 内容含业务明文与用户数据, 仅限授权测试, 严禁外发(红线 M2);
+ *   2. JSONObject 调用极频繁, 输出量大, 建议配合 grep 过滤关键字段。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l json_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][json]") }}';
+
+Java.perform(function () {
+    // ---- org.json.JSONObject: 构造与 put ----
+    var JSONObject = Java.use('org.json.JSONObject');
+
+    JSONObject.$init.overload('java.lang.String').implementation = function (json) {
+        console.log(LOG_TAG + ' [JSONObject$init(String)] ' + json);
+        return this.$init(json);
+    };
+
+    JSONObject.put.overload('java.lang.String', 'java.lang.Object').implementation = function (k, v) {
+        console.log(LOG_TAG + ' [JSONObject.put] ' + k + ' = ' + v);
+        return this.put(k, v);
+    };
+
+    JSONObject.toString.implementation = function () {
+        var s = this.toString();
+        console.log(LOG_TAG + ' [JSONObject.toString] ' + s);
+        return s;
+    };
+
+    // ---- org.json.JSONArray: 构造 ----
+    var JSONArray = Java.use('org.json.JSONArray');
+
+    JSONArray.$init.overload('java.lang.String').implementation = function (json) {
+        console.log(LOG_TAG + ' [JSONArray$init(String)] ' + json);
+        return this.$init(json);
+    };
+
+    {% if include_gson %}
+    // ---- Gson(如目标使用) ----
+    try {
+        var Gson = Java.use('com.google.gson.Gson');
+        Gson.toJson.overload('java.lang.Object').implementation = function (src) {
+            var s = this.toJson(src);
+            console.log(LOG_TAG + ' [Gson.toJson] ' + s);
+            return s;
+        };
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] Gson not present, skip');
+    }
+    {% endif %}
+
+    {% if include_fastjson %}
+    // ---- Fastjson(如目标使用) ----
+    try {
+        var JSON_ = Java.use('com.alibaba.fastjson.JSON');
+        JSON_.toJSONString.overload('java.lang.Object').implementation = function (obj) {
+            var s = this.toJSONString(obj);
+            console.log(LOG_TAG + ' [Fastjson.toJSONString] ' + s);
+            return s;
+        };
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] Fastjson not present, skip');
+    }
+    {% endif %}
+
+    console.log(LOG_TAG + ' [✓] json hooks installed');
+});

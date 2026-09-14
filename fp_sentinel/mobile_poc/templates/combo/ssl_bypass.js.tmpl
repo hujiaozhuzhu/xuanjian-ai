@@ -1,0 +1,100 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— SSL Pinning 证书绑定绕过 (ssl_bypass)
+ * ============================================================
+ * 【功能说明】
+ *   多层绕过 Android 证书绑定: OkHttp3 CertificatePinner / TrustManagerImpl /
+ *   WebView onReceivedSslError / TrustKit, 并将 TrustManager 全部替换为
+ *   放行实现。用途: 授权测试中让 Burp/Charles 等代理工具成功抓取 HTTPS 流量。
+ *
+ * 【风险提示】
+ *   1. 本脚本会【禁用目标 App 的 HTTPS 证书校验】, 使流量可被中间人查看 ——
+ *      只能在授权测试环境 + 测试账号使用, 严禁在真实网络环境对生产 App 使用;
+ *   2. 绕过后抓取的流量含用户敏感数据, 仅本地留存, 严禁外发(红线 M2/M8);
+ *   3. 部分框架(自实现 pinning/Flutter BoringSSL)不在本脚本覆盖范围。
+ *
+ * 【使用方法】
+ *   1. 代理设备配好 Burp 证书(用户证书即可, 本脚本同时绕过系统校验);
+ *   2. frida -U -f {{ package_name | default("com.target.app") }} -l ssl_bypass.js --no-pause
+ *   3. 控制台出现 [✓] 即可开始抓包。
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][ssl_bypass]") }}';
+
+Java.perform(function () {
+
+    // ---- 1. OkHttp3 CertificatePinner.check ----
+    try {
+        var CertificatePinner = Java.use('okhttp3.CertificatePinner');
+        CertificatePinner.check.overload('java.lang.String', 'java.util.List')
+            .implementation = function (hostname, peerCertificates) {
+                console.log(LOG_TAG + ' [~] okhttp3 CertificatePinner.check bypassed: ' + hostname);
+                return;
+            };
+        console.log(LOG_TAG + ' [+] okhttp3 CertificatePinner bypassed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] okhttp3 not present: ' + e.message);
+    }
+
+    // ---- 2. Conscrypt / TrustManagerImpl.checkTrustedRecursive ----
+    try {
+        var TrustManagerImpl = Java.use('com.android.org.conscrypt.TrustManagerImpl');
+        TrustManagerImpl.checkTrustedRecursive.implementation = function () {
+            console.log(LOG_TAG + ' [~] TrustManagerImpl.checkTrustedRecursive bypassed');
+            // 返回空信任链集合: ArrayList
+            return Java.use('java.util.ArrayList').$new();
+        };
+        console.log(LOG_TAG + ' [+] TrustManagerImpl bypassed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] TrustManagerImpl bypass skip: ' + e.message);
+    }
+
+    // ---- 3. 自定义 X509TrustManager: 全部替换为放行 ----
+    try {
+        var X509TrustManager = Java.use('javax.net.ssl.X509TrustManager');
+        var SSLContext = Java.use('javax.net.ssl.SSLContext');
+        var TrustManager = Java.registerClass({
+            name: 'com.fpsentinel.TrustAllManager',
+            implements: [X509TrustManager],
+            methods: {
+                checkClientTrusted: function (chain, authType) {
+                    console.log(LOG_TAG + ' [~] checkClientTrusted bypassed');
+                },
+                checkServerTrusted: function (chain, authType) {
+                    console.log(LOG_TAG + ' [~] checkServerTrusted bypassed');
+                },
+                getAcceptedIssuers: function () {
+                    return [];
+                }
+            }
+        });
+        var EmptyArray = Java.array('javax.net.ssl.TrustManager', [TrustManager.$new()]);
+        SSLContext.init.overload(
+            '[Ljavax.net.ssl.KeyManager;', '[Ljavax.net.ssl.TrustManager;', 'java.security.SecureRandom'
+        ).implementation = function (keyManager, trustManager, secureRandom) {
+            console.log(LOG_TAG + ' [~] SSLContext.init -> TrustAll');
+            this.init(keyManager, EmptyArray, secureRandom);
+        };
+        console.log(LOG_TAG + ' [+] SSLContext TrustAll installed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] SSLContext bypass skip: ' + e.message);
+    }
+
+    // ---- 4. WebView SSL 错误放行 ----
+    try {
+        var WebViewClient = Java.use('android.webkit.WebViewClient');
+        WebViewClient.onReceivedSslError.overload(
+            'android.webkit.WebView', 'android.webkit.SslErrorHandler', 'android.net.http.SslError'
+        ).implementation = function (webView, handler, sslError) {
+            console.log(LOG_TAG + ' [~] WebView SSL error bypassed: ' + sslError);
+            handler.proceed();
+        };
+        console.log(LOG_TAG + ' [+] WebViewClient SSL bypass installed');
+    } catch (e) {
+        console.log(LOG_TAG + ' [i] WebView bypass skip: ' + e.message);
+    }
+
+    console.log(LOG_TAG + ' [✓] SSL pinning bypass suite installed —— 记得抓完包即停止会话');
+});

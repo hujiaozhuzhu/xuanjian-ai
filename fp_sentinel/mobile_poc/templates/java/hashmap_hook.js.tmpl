@@ -1,0 +1,56 @@
+/**
+ * ============================================================
+ * 玄鉴 v4.0 Frida POC —— HashMap 遍历 Hook (hashmap_hook)
+ * ============================================================
+ * 【功能说明】
+ *   Hook {{ class_name }}.{{ method_name }}, 对 HashMap/Hashtable/Map 类型
+ *   参数做全量遍历打印。隐雾定位技法②: 网络请求参数普遍以 Map 组装,
+ *   遍历 Map 可一次性拿到全部请求参数(含签名字段)。
+ *
+ * 【风险提示】
+ *   1. 打印的是完整请求参数(可能含明文密码), 仅限授权测试, 严禁外发(红线 M2);
+ *   2. 全局 Hook HashMap 会崩溃目标进程, 本模板只 Hook 业务方法内的 Map 参数。
+ *
+ * 【使用方法】
+ *   frida -U -f {{ package_name | default("com.target.app") }} -l hashmap_hook.js --no-pause
+ * ============================================================
+ */
+'use strict';
+
+var LOG_TAG = '{{ log_tag | default("[fp-sentinel][hashmap]") }}';
+var TARGET_CLASS = '{{ class_name }}';
+var TARGET_METHOD = '{{ method_name }}';
+
+function dumpMap(tag, map) {
+    try {
+        var Map = Java.use('java.util.Map');
+        if (!Map.class.isInstance(map)) {
+            console.log(LOG_TAG + ' ' + tag + ': <not a Map>');
+            return;
+        }
+        var entrySet = map.entrySet().iterator();
+        console.log(LOG_TAG + ' ' + tag + ' map dump ────');
+        while (entrySet.hasNext()) {
+            var entry = Java.cast(entrySet.next(), Java.use('java.util.Map$Entry'));
+            console.log(LOG_TAG + '   ' + entry.getKey() + ' = ' + entry.getValue());
+        }
+    } catch (e) {
+        console.log(LOG_TAG + ' ' + tag + ' dump error: ' + e);
+    }
+}
+
+Java.perform(function () {
+    var clazz = Java.use(TARGET_CLASS);
+    clazz[TARGET_METHOD].overloads.forEach(function (ov) {
+        ov.implementation = function () {
+            console.log(LOG_TAG + ' ──── ' + TARGET_CLASS + '.' + TARGET_METHOD + ' ────');
+            for (var i = 0; i < arguments.length; i++) {
+                dumpMap('arg[' + i + ']', arguments[i]);
+            }
+            var ret = ov.apply(this, arguments);
+            dumpMap('return', ret);
+            return ret;
+        };
+    });
+    console.log(LOG_TAG + ' [✓] hashmap hook installed');
+});
