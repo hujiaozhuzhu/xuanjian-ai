@@ -208,12 +208,13 @@ def _load(tmp_path: Path, name: str = "report.xlsx"):
 
 
 def test_generate_success(generator, sample_report, tmp_path):
-    """生成成功：文件存在、返回路径一致、10 个工作表。"""
+    """生成成功：文件存在、返回路径一致、11 个工作表（含风险评级）。"""
     out = tmp_path / "out" / "report.xlsx"
     result = generator.generate(sample_report, out)
     assert result == out
     wb = _load(tmp_path, "out/report.xlsx")
     assert wb.sheetnames == SHEET_ORDER
+    assert len(wb.sheetnames) == 11
     wb.close()
 
 
@@ -222,7 +223,7 @@ def test_sheet_count_and_content(generator, sample_report, tmp_path):
     out = tmp_path / "report.xlsx"
     generator.generate(sample_report, out)
     wb = _load(tmp_path)
-    assert len(wb.sheetnames) == 10
+    assert len(wb.sheetnames) == 11
     for name in SHEET_ORDER:
         ws = wb[name]
         assert ws.max_row >= 1
@@ -407,7 +408,7 @@ def test_sample_factory_report(tmp_path):
     result = gen.generate(report, out)
     assert result == out
     wb = _load(tmp_path, "sample.xlsx")
-    assert len(wb.sheetnames) == 10
+    assert len(wb.sheetnames) == 11
     assert wb["封面"]["A1"].value == report.title
     wb.close()
 

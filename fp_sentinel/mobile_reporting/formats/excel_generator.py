@@ -31,6 +31,12 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from openpyxl.utils import get_column_letter
 
+try:
+    from ..cvss import explain_score, suggest_cvss
+except ImportError:  # pragma: no cover
+    explain_score = None  # type: ignore[assignment]
+    suggest_cvss = None  # type: ignore[assignment]
+
 from .base_generator import BaseReportGenerator
 from ._fallback_models import get_attr
 
@@ -74,6 +80,7 @@ SHEET_ORDER: List[str] = [
     "EXP说明",
     "复现步骤",
     "附录",
+    "风险评级",
 ]
 
 #: 严重度 -> (填充色, 字体色)
@@ -118,6 +125,20 @@ _HEADER_FONT = Font(bold=True, color="FFFFFF", size=11)
 _ALT_FILL = PatternFill("solid", fgColor="F2F6FA")
 _LABEL_FILL = PatternFill("solid", fgColor="DDEBF7")
 _CODE_FILL = PatternFill("solid", fgColor="F2F2F2")
+
+
+def _cvss_color(score: float) -> str:
+    """将 CVSS 分值映射为颜色梯度（绿→黄→橙→红，用于淡彩填充）。"""
+    s = max(0.0, min(10.0, float(score)))
+    if s >= 9.0:
+        return "FFCCCC"  # 浅红
+    if s >= 7.0:
+        return "FFD9B3"  # 浅橙
+    if s >= 4.0:
+        return "FFF2CC"  # 浅黄
+    if s > 0.0:
+        return "D6E4F0"  # 浅绿/蓝灰（表示低风险）
+    return "FFFFFF"  # 白色（无评分）
 
 
 class ReportGenerationError(RuntimeError):
@@ -203,6 +224,7 @@ _EMPTY_HINTS = {
     "POC脚本": "无漏洞对应的 POC 脚本。",
     "EXP说明": "无漏洞对应的 EXP 说明。",
     "复现步骤": "无漏洞复现步骤。",
+    "风险评级": "本次扫描未发现安全问题。",
 }
 
 
@@ -286,6 +308,7 @@ class ExcelGenerator(BaseReportGenerator):
         self._fill_exp(wb["EXP说明"], findings)
         self._fill_repro(wb["复现步骤"], findings)
         self._fill_appendix(wb["附录"], report, findings)
+        self._fill_risk_rating(wb["风险评级"], report, findings)
         if not findings:
             # 零发现是合法场景：给依赖漏洞数据的工作表写占位说明，
             # 保证报告完整可用且自检（所有工作表非空）能通过。
@@ -677,9 +700,18 @@ class ExcelGenerator(BaseReportGenerator):
         headers = [
             "编号", "标题", "等级", "CWE", "OWASP MASVS",
             "分类", "证据数", "截图数", "有POC", "有EXP",
+            "CVSS得分", "档位",
         ]
         rows = []
         for finding in findings:
+            # CVSS 得分与档位
+            cvss_score = 0.0
+            try:
+                cvss_raw = get_attr(finding, "cvss_score", 0.0)
+                cvss_score = float(cvss_raw) if cvss_raw is not None else 0.0
+            except (TypeError, ValueError):
+                cvss_score = 0.0
+            risk_level = str(get_attr(finding, "risk_level", "") or "-")
             rows.append([
                 self._finding_id(finding),
                 str(get_attr(finding, "title", "") or "-"),
@@ -691,8 +723,21 @@ class ExcelGenerator(BaseReportGenerator):
                 self._shot_count(finding),
                 "是" if self._has_poc(finding) else "否",
                 "是" if self._has_exp(finding) else "否",
+                cvss_score if cvss_score > 0 else "-",
+                risk_level if risk_level != "-" else "-",
             ])
         self._write_table(ws, headers, rows, severity_col=2)
+        # CVSS 得分列（第 11 列）应用颜色梯度
+        for i, finding in enumerate(findings):
+            cvss_score = 0.0
+            try:
+                cvss_raw = get_attr(finding, "cvss_score", 0.0)
+                cvss_score = float(cvss_raw) if cvss_raw is not None else 0.0
+            except (TypeError, ValueError):
+                cvss_score = 0.0
+            if cvss_score > 0:
+                cell = ws.cell(row=2 + i, column=11)
+                cell.fill = PatternFill("solid", fgColor=_cvss_color(cvss_score))
         for i, finding in enumerate(findings):
             fid = self._finding_id(finding)
             cell = ws.cell(row=2 + i, column=1)
@@ -701,7 +746,9 @@ class ExcelGenerator(BaseReportGenerator):
 
     def _write_empty_placeholder(self, ws: Any, hint: str) -> None:
         """零发现场景在工作表首行写入合并占位说明。"""
-        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+        # 兼容原 10 列与新 12 列（含 CVSS 得分/档位）布局
+        col_span = max(ws.max_column, 12)
+        ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_span)
         cell = ws.cell(row=1, column=1, value=_sanitize(hint))
         cell.font = Font(italic=True, color="808080")
         cell.alignment = Alignment(horizontal="center", vertical="center")
@@ -1142,6 +1189,68 @@ class ExcelGenerator(BaseReportGenerator):
             self._autosize(ws)
         self._adjust_row_heights(ws)
 
+    def _fill_risk_rating(
+        self, ws: Any, report: Any, findings: List[Any]
+    ) -> None:
+        """填充风险评级工作表：CVSS 分布统计 + TOP 漏洞表。"""
+        # CVSS 分布区间
+        bins = {"低危 (0-3.9)": 0, "中危 (4-6.9)": 0,
+                "高危 (7-8.9)": 0, "严重 (9-10)": 0}
+        scored_findings = []
+        for finding in findings:
+            cvss_score = 0.0
+            try:
+                cvss_raw = get_attr(finding, "cvss_score", 0.0)
+                cvss_score = float(cvss_raw) if cvss_raw is not None else 0.0
+            except (TypeError, ValueError):
+                cvss_score = 0.0
+            if cvss_score > 0:
+                scored_findings.append((finding, cvss_score))
+                if cvss_score >= 9.0:
+                    bins["严重 (9-10)"] += 1
+                elif cvss_score >= 7.0:
+                    bins["高危 (7-8.9)"] += 1
+                elif cvss_score >= 4.0:
+                    bins["中危 (4-6.9)"] += 1
+                else:
+                    bins["低危 (0-3.9)"] += 1
+
+        # 小节 1: CVSS 四档分布
+        row = self._section_header(ws, 1, "一、CVSS v3.1 分布统计", span=3)
+        # 合并两列：区间 / 数量 / 占比
+        cvss_rows = []
+        total_scored = len(scored_findings)
+        for label, count in bins.items():
+            pct = f"{count / total_scored * 100:.1f}%" if total_scored else "-"
+            cvss_rows.append([label, count, pct])
+        self._write_table(ws, ["区间", "数量", "占比"], cvss_rows, start_row=row)
+
+        # 小节 2: TOP 10 漏洞
+        row = row + len(cvss_rows) + 2
+        row = self._section_header(ws, row, "二、TOP 10 漏洞", span=4)
+        scored_findings.sort(key=lambda x: -x[1])
+        top_rows = []
+        for fid_finding, cvss in scored_findings[:10]:
+            fid = self._finding_id(fid_finding)
+            title = str(get_attr(fid_finding, "title", "") or "-")
+            sev = self._norm_severity(fid_finding)
+            top_rows.append([fid, title, f"{cvss:.1f}", sev])
+        if not top_rows:
+            top_rows.append(["-", "-", "-", "-"])
+        self._write_table(
+            ws, ["编号", "标题", "CVSS", "严重度"], top_rows, start_row=row
+        )
+        for offset in range(len(top_rows)):
+            sev_cell_text = top_rows[offset][3]
+            self._apply_severity_style(
+                ws.cell(row=row + 1 + offset, column=4), severity=sev_cell_text
+            )
+        # TOP 表 CVSS 列着色
+        for offset, (_, cvss) in enumerate(scored_findings[:10]):
+            cell = ws.cell(row=row + 1 + offset, column=3)
+            if cvss > 0:
+                cell.fill = PatternFill("solid", fgColor=_cvss_color(cvss))
+
     def _verify_output(self, path: Path) -> None:
         """生成后自检：重新打开文件，校验 sheet 数量、顺序与非空内容。
 
@@ -1155,7 +1264,9 @@ class ExcelGenerator(BaseReportGenerator):
                 f"生成文件无法重新打开: {path} ({exc})"
             ) from exc
         try:
-            if wb.sheetnames != SHEET_ORDER:
+            # 兼容原 10 表报告（不含 风险评级）与新 11 表报告
+            expected_10 = [s for s in SHEET_ORDER if s != "风险评级"]
+            if wb.sheetnames != SHEET_ORDER and wb.sheetnames != expected_10:
                 raise ReportGenerationError(
                     f"自检失败: 工作表数量或顺序异常: {wb.sheetnames}"
                 )

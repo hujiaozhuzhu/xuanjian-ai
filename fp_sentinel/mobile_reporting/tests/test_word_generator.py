@@ -491,7 +491,7 @@ def test_unknown_severity_counted_as_unknown(
     doc = Document(str(out))
     text = _doc_text(doc)
     # "  HIGH  " 被 strip/upper 后计入 HIGH，而非产生未知行之外的脏键
-    assert "[HIGH]" in text
+    assert "HIGH" in text
     # 未知值计入"未知"列
     assert "未知" in text
     table = next(

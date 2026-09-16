@@ -7,6 +7,7 @@
 
 import asyncio
 import json
+import os
 import time
 import logging
 from pathlib import Path
@@ -311,6 +312,11 @@ def scan(
     ),
     kg_version: str = typer.Option("unversioned", "--kg-version", help="归档到知识图谱的项目版本标识"),
     kg_top_k: int = typer.Option(5, "--kg-top-k", min=1, max=20, help="知识图谱参考章节最多展示的命中数"),
+    install_deps: bool = typer.Option(
+        False, "--install-deps",
+        help="检测到 semgrep/bandit 等缺失时交互询问是否自动安装（仍需用户确认）",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="仅打印将要执行的安装命令（与 --install-deps 搭配）"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="详细输出"),
 ):
     """扫描项目，发现安全问题"""
@@ -324,6 +330,10 @@ def scan(
 
         # 加载配置
         config = load_config(config_file)
+
+        # --install-deps：检测缺失扫描器并给出安装命令
+        if install_deps:
+            _handle_install_deps(scanners, dry_run)
 
         # 解析扫描器列表
         scanner_list = None
@@ -822,6 +832,194 @@ def stats(
 def version():
     """显示版本信息"""
     console.print(f"玄鉴 (xuanjian-ai) fp_sentinel v{__version__}")
+
+
+# ─────────────────────── setup 命令 (C-002) ───────────────────────
+
+@app.command("setup")
+def setup_cmd(
+    audit: bool = typer.Option(False, "--audit", help="仅检查并输出依赖报告（不改变环境）"),
+    scan_dir: str = typer.Option(".", "--scan-dir", help="项目目录（默认当前目录）"),
+    auto: bool = typer.Option(False, "--auto", help="自动探测项目语言并输出推荐"),
+    install: bool = typer.Option(False, "--install", help="真正安装（三层确认：I_HAVE_ENV_AUTH=1 或交互确认）"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="只打印将要执行的命令（默认行为）"),
+    index_url: Optional[str] = typer.Option(None, "--index-url", help="pip 镜像（写入临时 PIP_INDEX_URL）"),
+    only: Optional[str] = typer.Option(None, "--only", help="限定只安装指定扫描器（逗号分隔，如 semgrep,bandit）"),
+    generate_script: Optional[str] = typer.Option(
+        None, "--generate-script",
+        help="写出一一键脚本，格式 ps1 或 sh（如 --generate-script ps1 C:/setup.ps1）",
+    ),
+):
+    """扫描器一键安装向导（C-002）。"""
+    _setup_logging(verbose=False)
+
+    from fp_sentinel.scanner_setup import (
+        SCANNERS,
+        SCANNER_INSTALL_CMD,
+        ScannerInstaller,
+        ProjectScannerAdvisor,
+        env_token_agreed,
+        interactive_agreement,
+    )
+
+    installer = ScannerInstaller()
+
+    # --audit：仅检查
+    if audit:
+        _run_setup_audit(installer, scan_dir, auto)
+        return
+
+    # --generate-script
+    if generate_script:
+        ext = generate_script.lower()
+        if ext not in ("ps1", "sh"):
+            console.print(f"[red]不支持的脚本格式: {ext}（仅 ps1/sh）[/red]")
+            raise typer.Exit(1)
+        advisor = ProjectScannerAdvisor()
+        recs = advisor.recommend(scan_dir)
+        names = [r["name"] for r in recs]
+        if only:
+            names = [n.strip() for n in only.split(",") if n.strip() in SCANNERS]
+        script = installer.generate_one_click_script(names, shell=ext)
+        console.print(f"[green]一键脚本内容[/green]:\n{script}")
+        raise typer.Exit(0)
+
+    # 确定要安装的扫描器
+    target_scanners: List[str] = []
+    if only:
+        target_scanners = [n.strip() for n in only.split(",") if n.strip() in SCANNERS]
+        if not target_scanners:
+            console.print("[red]--only 未匹配到任何受管扫描器[/red]")
+            raise typer.Exit(1)
+    elif auto:
+        advisor = ProjectScannerAdvisor()
+        recs = advisor.recommend(scan_dir)
+        target_scanners = [r["name"] for r in recs]
+    else:
+        target_scanners = list(SCANNERS.keys())
+
+    # dry_run（默认行为）只打印命令
+    dry = dry_run or not install
+    if dry:
+        console.print("[yellow]dry-run 模式，仅打印命令：[/yellow]")
+        result = installer.install(target_scanners, index_url=index_url, dry_run=True)
+        for cmd in result["commands"]:
+            console.print(f"  [cyan]{cmd}[/cyan]")
+        console.print("\n[dim]使用 --install 真正安装（仍需确认）[/dim]")
+        console.print(f"[dim]或使用: {SCANNER_INSTALL_CMD}[/dim]")
+        raise typer.Exit(0)
+
+    # 真正安装：三层确认
+    if not (env_token_agreed() or interactive_agreement()):
+        console.print("[yellow]未获得安装授权，已取消。[/yellow]")
+        raise typer.Exit(0)
+
+    if index_url:
+        os.environ["PIP_INDEX_URL"] = index_url
+    result = installer.install(target_scanners, index_url=index_url, dry_run=False)
+    for r in result["results"]:
+        if r["ok"]:
+            console.print(f"[green]✓ {r["name"]} 安装成功[/green]")
+        else:
+            console.print(f"[red]✗ {r["name"]} 安装失败 (rc={r["returncode"]})[/red]")
+    if result.get("suggestions"):
+        console.print(f"\n{result['suggestions']}")
+
+
+# ─────────────────────── render 命令 (D-002) ───────────────────────
+
+@app.command("render")
+def render_cmd(
+    docx: str = typer.Argument(..., help="要渲染的 docx 文件路径"),
+    fmt: str = typer.Option("auto", "--fmt", help="输出格式 auto/html/pdf/png"),
+    scale: float = typer.Option(1.5, "--scale", help="浏览器 headless 缩放系数"),
+    output: Optional[str] = typer.Option(None, "--output", help="输出文件路径（白名单内）"),
+):
+    """DOCX 预览渲染（D-002）：自动降级 LibreOffice → 浏览器 → 原生 HTML。"""
+    _setup_logging(verbose=False)
+
+    from fp_sentinel.web_rendering import DocxPreview
+
+    preview = DocxPreview()
+    result = preview.render(docx, out_path=output, fmt=fmt, scale=scale)
+
+    console.print("[green]渲染完成[/green]")
+    console.print(f"  格式: {result['format']}")
+    console.print(f"  后端: {result['backend']}")
+    console.print(f"  输出: {result['path']}")
+    if result["warnings"]:
+        console.print("[yellow]警告:[/yellow]")
+        for w in result["warnings"]:
+            console.print(f"  - {w}")
+
+
+# ─────────────────────── 辅助函数 ───────────────────────
+
+def _handle_install_deps(scanners: Optional[str], dry_run_flag: bool) -> None:
+    """--install-deps 逻辑：检测缺失扫描器并给出安装命令或交互安装。"""
+    from fp_sentinel.scanner_setup import (
+        SCANNERS,
+        ScannerInstaller,
+        env_token_agreed,
+        interactive_agreement,
+    )
+
+    installer = ScannerInstaller()
+    if scanners:
+        names_to_check = [s.strip() for s in scanners.split(",")]
+    else:
+        names_to_check = ["semgrep", "bandit"]
+
+    missing: List[str] = []
+    for name in names_to_check:
+        info = installer.check(name)
+        if not info["installed"]:
+            missing.append(name)
+
+    if not missing:
+        console.print("[green]所需扫描器均已就绪。[/green]")
+        return
+
+    console.print(f"[yellow]缺失扫描器: {', '.join(missing)}[/yellow]")
+    for name in missing:
+        meta = SCANNERS.get(name, {})
+        pkg = meta.get("pip_package", name)
+        console.print(f"  pip install {pkg}")
+
+    if dry_run_flag:
+        console.print("[dim]--dry-run：以上命令未执行。[/dim]")
+        return
+
+    if env_token_agreed() or interactive_agreement():
+        result = installer.install(missing, dry_run=False)
+        for r in result["results"]:
+            if r["ok"]:
+                console.print(f"[green]✓ {r['name']} 安装成功[/green]")
+            else:
+                console.print(f"[red]✗ {r['name']} 安装失败[/red]")
+
+
+def _run_setup_audit(
+    installer: object,
+    scan_dir: str,
+    auto: bool,
+) -> None:
+    """运行依赖审计报告。"""
+    from fp_sentinel.mobile_common.env_check import ScannerChecker
+
+    checker = ScannerChecker()
+    console.print("[bold]扫描器可用性审计[/bold]")
+    for name in checker.scanner_names:
+        result = checker.check(name)
+        status = "[green]✓[/green]" if result.available else "[red]✗[/red]"
+        console.print(f"  {status} {result.name}: {result.version or '未安装'}")
+
+    if auto:
+        from fp_sentinel.scanner_setup import ProjectScannerAdvisor
+
+        advisor = ProjectScannerAdvisor()
+        report = advisor.format_report(scan_dir)
+        console.print(f"\n{report}")
 
 
 # ─────────────────────── 入口 ───────────────────────

@@ -17,6 +17,21 @@ from pathlib import Path
 
 from .formats.base_generator import BaseReportGenerator, PathNotAllowedError
 
+try:
+    from .cvss import (  # type: ignore[no-redef]
+        COMMON_FINDINGS,
+        CvssV31,
+        auto_score,
+        explain_score,
+        suggest_cvss,
+    )
+except ImportError:  # pragma: no cover
+    COMMON_FINDINGS = {}  # type: ignore[assignment]
+    CvssV31 = None  # type: ignore[assignment]
+    auto_score = None  # type: ignore[assignment]
+    explain_score = None  # type: ignore[assignment]
+    suggest_cvss = None  # type: ignore[assignment]
+
 __all__ = [
     "BaseReportGenerator",
     "PathNotAllowedError",
@@ -25,6 +40,11 @@ __all__ = [
     "HtmlReportGenerator",
     "OPENPYXL_AVAILABLE",
     "generate_report",
+    "CvssV31",
+    "suggest_cvss",
+    "auto_score",
+    "explain_score",
+    "COMMON_FINDINGS",
 ]
 
 try:

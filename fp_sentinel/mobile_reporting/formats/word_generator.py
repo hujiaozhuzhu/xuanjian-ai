@@ -32,6 +32,13 @@ except ImportError as exc:  # pragma: no cover - 环境依赖
         "WordGenerator 依赖 python-docx，请先安装: pip install python-docx"
     ) from exc
 
+try:
+    from ..cvss import CvssV31, explain_score, suggest_cvss
+except ImportError:  # pragma: no cover
+    CvssV31 = None  # type: ignore[assignment]
+    explain_score = None  # type: ignore[assignment]
+    suggest_cvss = None  # type: ignore[assignment]
+
 from .base_generator import BaseReportGenerator
 from ._fallback_models import get_attr
 
@@ -223,6 +230,23 @@ def _add_caption(doc: Any, text: str) -> None:
     run.font.size = Pt(9)
     run.bold = True
     _set_run_east_asia(run, _EAST_ASIA_BODY)
+
+
+def _score_to_severity(score: float) -> str:
+    """将 CVSS base 分数映射为严重度档位字符串。"""
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "INFO"
+    if s == 0.0:
+        return "INFO"
+    if s < 4.0:
+        return "LOW"
+    if s < 7.0:
+        return "MEDIUM"
+    if s < 9.0:
+        return "HIGH"
+    return "CRITICAL"
 
 
 def _add_placeholder(doc: Any, text: str) -> None:
@@ -533,16 +557,31 @@ class WordGenerator(BaseReportGenerator):
         doc.add_heading("2.3 关键发现 Top 列表", level=2)
         top_findings = self._sorted_findings(findings)[:5]
         if top_findings:
+            list_rows: List[List[str]] = []
             for idx, vuln in enumerate(top_findings, start=1):
-                severity = str(
+                sev = str(
                     get_attr(vuln, "severity", "INFO") or "INFO"
                 ).strip().upper()
                 vuln_id = str(get_attr(vuln, "vuln_id", "") or "N/A")
-                title = str(get_attr(vuln, "title", "") or "未命名漏洞")
-                doc.add_paragraph(
-                    f"{idx}. [{severity}] {vuln_id} {title}",
-                    style="List Number",
-                )
+                ftitle = str(get_attr(vuln, "title", "") or "未命名漏洞")
+                # CVSS 列
+                cvss_s = 0.0
+                try:
+                    cvss_raw = get_attr(vuln, "cvss_score", 0.0)
+                    cvss_s = float(cvss_raw) if cvss_raw is not None else 0.0
+                except (TypeError, ValueError):
+                    cvss_s = 0.0
+                cvss_val = f"{cvss_s:.1f}" if cvss_s > 0 else "-"
+                risk_lv = str(get_attr(vuln, "risk_level", "") or "-")
+                list_rows.append([str(idx), vuln_id, ftitle, sev, cvss_val, risk_lv])
+            list_table = _add_table(
+                doc,
+                ["#", "编号", "标题", "等级", "CVSS", "档位"],
+                list_rows,
+            )
+            for row_idx in range(1, len(list_rows) + 1):
+                sev_cell_text = list_rows[row_idx - 1][3]
+                _colorize_severity_cell(list_table, row_idx, 3, sev_cell_text)
         else:
             _add_placeholder(doc, "本次测试未发现安全问题。")
 
@@ -550,6 +589,7 @@ class WordGenerator(BaseReportGenerator):
         """第 3 章：详细漏洞分析，每个 finding 独立小节。"""
         doc.add_heading("3. 详细漏洞分析", level=1)
         findings = self._get_findings(report)
+        self._last_findings = findings
         if not findings:
             _add_placeholder(doc, "本次测试未发现需要详细分析的安全问题。")
             return
@@ -576,6 +616,44 @@ class WordGenerator(BaseReportGenerator):
         ]
         table = _add_table(doc, ["项目", "内容"], info_rows)
         _colorize_severity_cell(table, 1, 0, severity)
+
+        # CVSS 评分信息
+        cvss_score = 0.0
+        cvss_vector = ""
+        cvss_explanation = ""
+        try:
+            cvss_raw = get_attr(vuln, "cvss_score", 0.0)
+            cvss_score = float(cvss_raw) if cvss_raw is not None else 0.0
+            cvss_vector = str(get_attr(vuln, "cvss_vector", "") or "")
+        except (TypeError, ValueError):
+            cvss_score = 0.0
+        if cvss_score > 0:
+            risk_level = str(get_attr(vuln, "risk_level", "") or "")
+            doc.add_heading(f"3.{index}.1a CVSS 评分", level=3)
+            cvss_rows = [
+                ("CVSS v3.1 得分", f"{cvss_score:.1f}"),
+                ("风险档位", risk_level or "未设定"),
+                ("向量字符串", cvss_vector or "N/A"),
+            ]
+            cvss_table = _add_table(doc, ["项目", "内容"], cvss_rows)
+            # 为 CVSS 得分单元格着色
+            cvss_sev = _score_to_severity(cvss_score)
+            _shade_cell(cvss_table.rows[1].cells[0], _SEVERITY_BG.get(cvss_sev, "808080"))
+            fg = _SEVERITY_FG.get(cvss_sev, RGBColor(0x00, 0x00, 0x00))
+            for p in cvss_table.rows[1].cells[0].paragraphs:
+                for run in p.runs:
+                    run.font.color.rgb = fg
+                    run.bold = True
+            # 中文说明段落
+            if explain_score is not None:
+                try:
+                    cvss_explanation = explain_score(
+                        finding=vuln, score=cvss_score, vector=cvss_vector or None
+                    )
+                except Exception:  # noqa: BLE001
+                    cvss_explanation = ""
+            if cvss_explanation:
+                doc.add_paragraph(f"评分说明：{cvss_explanation}")
 
         components = get_attr(vuln, "components", []) or []
         if components:
@@ -870,6 +948,19 @@ class WordGenerator(BaseReportGenerator):
                 f"表格数={table_count}（应>=1），"
                 f"段落数={paragraph_count}（应>=10）：{h1_texts}"
             )
+        # 自检：若有 cvss 字段则 vector 须以 CVSS:3.1/ 开头
+        findings_for_check = getattr(self, "_last_findings", None)
+        if findings_for_check:
+            for fv in findings_for_check:
+                try:
+                    vs = str(get_attr(fv, "cvss_vector", "") or "")
+                except Exception:  # noqa: BLE001
+                    vs = ""
+                if vs and not vs.startswith("CVSS:3.1/"):
+                    raise ReportGenerationError(
+                        f"自检失败：cvss_vector 格式异常，期望 CVSS:3.1/ 开头，"
+                        f"实际为 {vs!r}"
+                    )
         logger.debug(
             "自检通过: 段落数=%d, 表格数=%d, Heading1=%s",
             paragraph_count,

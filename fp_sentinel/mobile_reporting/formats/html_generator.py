@@ -212,6 +212,7 @@ class HtmlGenerator(BaseReportGenerator):
             "stats": tpl.render_stats(counts, total),
             "appendix": tpl.render_appendix(meta),
             "lightbox": tpl.render_lightbox(),
+            "cvss_distribution": tpl.cvss_distribution_html(counts),
         }
         return tpl.render_page(ctx)
 
@@ -424,7 +425,25 @@ class HtmlGenerator(BaseReportGenerator):
                 _first_attr(vuln, ("references",), [])
             ),
             "search_blob": search_blob,
+            "cvss_score": self._normalize_cvss_score(vuln),
+            "cvss_vector": _as_str(
+                _first_attr(vuln, ("cvss_vector",), "")
+            ),
+            "risk_level": _as_str(
+                _first_attr(vuln, ("risk_level",), "")
+            ),
         }
+
+    @staticmethod
+    def _normalize_cvss_score(vuln: Any) -> float:
+        """归一 CVSS 分值为浮点数，失败返回 0.0。"""
+        raw = _first_attr(vuln, ("cvss_score",), 0.0)
+        if raw is None:
+            return 0.0
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return 0.0
 
     @staticmethod
     def _normalize_confidence(vuln: Any) -> str:

@@ -32,6 +32,8 @@ __all__ = [
     "render_stats",
     "render_appendix",
     "render_lightbox",
+    "cvss_badge_html",
+    "cvss_distribution_html",
 ]
 
 #: severity 固定展示顺序（高 -> 低）
@@ -290,6 +292,40 @@ box-shadow:var(--shadow);}
 #menu-toggle{display:inline-block;}
 .sev-filters{display:none;}
 }
+/* CVSS 环形进度条 */
+.cvss-ring{width:90px;height:90px;border-radius:50%;margin:0 auto 8px;
+position:relative;display:flex;align-items:center;justify-content:center;
+background:conic-gradient(
+var(--sev-critical) 0deg,var(--sev-critical) 0deg,
+var(--bg) 0deg,var(--bg) 360deg);}
+.cvss-ring::after{content:"";position:absolute;inset:10px;border-radius:50%;
+background:var(--card);}
+.cvss-ring .ring-text{position:relative;z-index:1;font-size:13px;
+font-weight:700;color:var(--text);}
+.cvss-small-rings{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0;}
+.cvss-sr-item{text-align:center;font-size:11px;color:var(--muted);}
+.cvss-sr-item .cvss-ring{width:54px;height:54px;}
+.cvss-sr-item .cvss-ring .ring-text{font-size:10px;}
+/* CVSS 徽章 */
+.cvss-badge{display:inline-flex;align-items:center;gap:4px;
+font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;
+background:var(--soft-info);color:var(--sev-info);
+border:1px solid var(--border);}
+.cvss-badge.sev-critical{background:var(--soft-critical);
+color:var(--sev-critical);border-color:transparent;}
+.cvss-badge.sev-high{background:var(--soft-high);color:var(--sev-high);
+border-color:transparent;}
+.cvss-badge.sev-medium{background:var(--soft-medium);
+color:var(--sev-medium);border-color:transparent;}
+.cvss-badge.sev-low{background:var(--soft-low);color:var(--sev-low);
+border-color:transparent;}
+.cvss-detail-block{margin-top:8px;padding:8px 12px;border-radius:8px;
+background:var(--code-bg);border:1px solid var(--border);}
+.cvss-detail-block h5{font-size:12px;margin:0 0 4px;color:var(--muted);}
+.cvss-detail-block .cvss-vector{font-family:ui-monospace,Consolas,monospace;
+font-size:11px;color:var(--text);word-break:break-all;}
+.cvss-detail-block .cvss-explain{font-size:12px;color:var(--muted);
+margin-top:4px;line-height:1.6;}
 @media print{
 .navbar,.sidebar,.lightbox,.sev-filters,#search-input,.nav-btn{
 display:none!important;}
@@ -623,6 +659,13 @@ def render_finding_card(f: Dict[str, Any]) -> str:
         badges.append(
             f'<span class="badge">置信度: {esc(f["confidence"])}</span>'
         )
+    cvss_badge = cvss_badge_html(
+        severity=sev,
+        score=f.get("cvss_score", 0.0),
+        vector=str(f.get("cvss_vector", "") or ""),
+    )
+    if cvss_badge:
+        badges.append(cvss_badge)
 
     body: List[str] = []
     if f.get("description"):
@@ -631,6 +674,25 @@ def render_finding_card(f: Dict[str, Any]) -> str:
     if f.get("impact"):
         body.append("<h4>危害影响</h4>")
         body.append(f'<p class="desc">{esc(f["impact"])}</p>')
+    # CVSS 详细数据段
+    cvss_score = f.get("cvss_score", 0.0)
+    cvss_vector = str(f.get("cvss_vector", "") or "")
+    if cvss_score and float(cvss_score) > 0:
+        sev = str(sev).upper()
+        cvss_detail_parts = [
+            '<div class="cvss-detail-block">',
+            '<h5>CVSS v3.1 评分</h5>',
+            f'<div><strong>得分:</strong> '
+            f'<span class="badge sev-{sev.lower()}">'
+            f'{esc(f"{float(cvss_score):.1f} {sev}")}</span>  ',
+            f'<strong>档位:</strong> {esc(str(f.get("risk_level", "") or "-"))}</div>',
+        ]
+        if cvss_vector:
+            cvss_detail_parts.append(
+                f'<div class="cvss-vector">{esc(cvss_vector)}</div>'
+            )
+        cvss_detail_parts.append('</div>')
+        body.append("".join(cvss_detail_parts))
     components = list(f.get("components", []) or [])
     if components:
         body.append("<h4>受影响组件</h4>")
@@ -709,7 +771,9 @@ def render_finding_card(f: Dict[str, Any]) -> str:
 
 
 def render_stats(counts: Dict[str, int], total: int) -> str:
-    """渲染 severity 分布纯 CSS 条形图。"""
+    """渲染 severity 分布：环形进度条 + 条形图。"""
+    # 环形进度条（在条形图前展示）
+    ring_html = cvss_distribution_html(counts)
     rows: List[str] = []
     for sev in SEVERITY_ORDER:
         n = counts.get(sev, 0)
@@ -725,6 +789,7 @@ def render_stats(counts: Dict[str, int], total: int) -> str:
     return (
         '<section class="section" id="stats-section">'
         "<h2>严重度分布</h2>"
+        f'{ring_html}'
         f'{"".join(rows)}</section>'
     )
 
@@ -814,3 +879,107 @@ def render_page(ctx: Dict[str, str]) -> str:
         "\n</script>\n</body>\n</html>",
     ]
     return "".join(parts)
+
+
+def cvss_badge_html(severity: str, score: float, vector: str = "",
+                    explanation: str = "") -> str:
+    """渲染 CVSS 徽章 HTML（数字 + 档位颜色）。
+
+    Args:
+        severity: 档位字符串（CRITICAL/HIGH/MEDIUM/LOW/INFO）。
+        score: CVSS 分值。
+        vector: CVSS 向量字符串。
+        explanation: 中文说明文本（可选）。
+
+    Returns:
+        HTML 片段字符串。
+    """
+    if score is None or float(score) <= 0:
+        return ""
+    sev = str(severity or "INFO").upper()
+    sev_key = sev.lower()
+    score_display = f"{float(score):.1f}"
+    parts = [
+        '<span class="cvss-badge sev-' + sev_key + '">'
+        f'CVSS {score_display} ' + sev + '</span>'
+    ]
+    if vector:
+        parts.append(
+            '<span class="cvss-vector" style="margin-left:6px;'
+            'font-family:ui-monospace,Consolas,monospace;'
+            'font-size:10px;color:var(--muted);">'
+            f'{esc(vector)}</span>'
+        )
+    if explanation:
+        parts.append(
+            f'<div class="cvss-explain" style="margin-top:4px;'
+            f'font-size:12px;color:var(--muted);line-height:1.6;">'
+            f'{esc(explanation)}</div>'
+        )
+    return "".join(parts)
+
+
+def cvss_distribution_html(counts: Dict[str, int]) -> str:
+    """渲染 CVSS 分布环形进度条与统计数字（纯 CSS，零外部依赖）。
+
+    使用 CSS conic-gradient 按各档位占比绘制环形，侧边显示每档计数。
+
+    Args:
+        counts: {CRITICAL: n, HIGH: n, MEDIUM: n, LOW: n, INFO: n} 计数字典。
+
+    Returns:
+        HTML 片段字符串。
+    """
+    colors = {
+        "CRITICAL": "var(--sev-critical)",
+        "HIGH": "var(--sev-high)",
+        "MEDIUM": "var(--sev-medium)",
+        "LOW": "var(--sev-low)",
+        "INFO": "var(--sev-info)",
+    }
+    labels = {
+        "CRITICAL": "严重",
+        "HIGH": "高危",
+        "MEDIUM": "中危",
+        "LOW": "低危",
+        "INFO": "提示",
+    }
+    total = sum(int(counts.get(s, 0)) for s in SEVERITY_ORDER) or 1
+    # 构建 conic-gradient 参数
+    stops: List[str] = []
+    cursor = 0.0
+    for sev in SEVERITY_ORDER:
+        n = int(counts.get(sev, 0))
+        pct = n / total
+        deg = pct * 360.0
+        color = colors[sev]
+        stops.append(f"{color} {cursor}deg {cursor + deg}deg")
+        cursor += deg
+    gradient = ",".join(stops)
+    ring_style = f"background:conic-gradient({gradient});"
+    # 统计条侧边
+    items: List[str] = []
+    for sev in SEVERITY_ORDER:
+        n = int(counts.get(sev, 0))
+        pct = round(n / total * 100, 1)
+        color = colors[sev]
+        items.append(
+            f'<div style="display:flex;align-items:center;gap:6px;'
+            f'margin:3px 0;">'
+            f'<span style="width:10px;height:10px;border-radius:50%;'
+            f'background:{color};display:inline-block;"></span>'
+            f'<span style="flex:1;font-size:12px;">'
+            f'{labels[sev]}</span>'
+            f'<span style="font-size:13px;font-weight:600;">{n}</span>'
+            f'<span style="font-size:11px;color:var(--muted);'
+            f'min-width:42px;text-align:right;">{pct}%</span>'
+            f'</div>'
+        )
+    return (
+        '<div class="cvss-dist" style="display:flex;gap:16px;'
+        'align-items:center;">'
+        f'<div class="cvss-ring" style="{ring_style}">'
+        f'<span class="ring-text">{total}</span></div>'
+        f'<div style="flex:1;">{"".join(items)}</div>'
+        '</div>'
+    )

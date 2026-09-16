@@ -72,6 +72,15 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return default
 
 
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    """宽容 float 转换，失败时回退默认值并记录 warning。"""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        logger.warning("float 转换失败，已回退默认值 %r: %r", default, value)
+        return default
+
+
 def _dict_items(raw: Any, label: str) -> List[Dict[str, Any]]:
     """把嵌套列表规整为 dict 列表（非 dict 元素记录 warning 后跳过）。"""
     if not raw:
@@ -324,6 +333,10 @@ class FindingReport:
     references: List[str] = field(default_factory=list)
     tool_version: str = ""
     confidence: float = 0.5
+    cvss_score: float = 0.0
+    cvss_vector: str = ""
+    risk_level: str = ""
+    affected_scope: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """序列化为可 JSON 化的 dict。"""
@@ -359,6 +372,10 @@ class FindingReport:
             references=[str(x) for x in refs_raw],
             tool_version=str(data.get("tool_version", "") or ""),
             confidence=_clamp_confidence(data.get("confidence", 0.5)),
+            cvss_score=_safe_float(data.get("cvss_score", 0.0), 0.0),
+            cvss_vector=str(data.get("cvss_vector", "") or ""),
+            risk_level=str(data.get("risk_level", "") or "").upper(),
+            affected_scope=str(data.get("affected_scope", "") or ""),
         )
 
 
@@ -550,6 +567,15 @@ class MobileSecurityReport:
             if not 0.0 <= finding.confidence <= 1.0:
                 warnings.append(
                     f"{prefix} confidence 超出 [0,1]: {finding.confidence}"
+                )
+            cvss = getattr(finding, "cvss_score", 0.0)
+            try:
+                cvss_v = float(cvss)
+            except (TypeError, ValueError):
+                cvss_v = -1.0
+            if cvss_v != 0.0 and not 0.0 <= cvss_v <= 10.0:
+                warnings.append(
+                    f"{prefix} cvss_score 超出 [0,10]: {cvss}"
                 )
             for shot in finding.screenshots:
                 if not shot.path:

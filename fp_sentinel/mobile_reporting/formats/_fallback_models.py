@@ -37,11 +37,19 @@ def get_attr(obj: Any, name: str, default: Any = None) -> Any:
 # 尝试导入并行开发的共享模型；失败时回退到本模块定义。
 # ---------------------------------------------------------------------------
 try:  # pragma: no cover - 取决于并行开发进度
-    from ..models import (  # type: ignore[no-redef]
+    from ..models import (  # type: ignore[no-redef]  # noqa: F401
+        Appendix,
+        EnvironmentInfo,
         Evidence,
+        ExpInfo,
+        FindingReport,
         MobileSecurityReport,
+        PocInfo,
+        ReportMetadata,
+        ReportStatistics,
         ReproStep,
         Screenshot,
+        ScreenshotRef,
         TargetAppInfo,
         Vulnerability,
     )
@@ -107,6 +115,68 @@ except ImportError:
         target_sdk: str = ""
         file_size: str = ""
         sha256: str = ""
+
+    @dataclass
+    class PocInfo:
+        """POC 信息。"""
+
+        id: str = ""
+        name: str = ""
+        type: str = "frida"
+        script_path: str = ""
+        script_content: str = ""
+        safety_level: str = "SAFE"
+        description: str = ""
+
+    @dataclass
+    class ExpInfo:
+        """EXP 信息：前提 / 步骤 / 影响 / 缓解。"""
+
+        id: str = ""
+        name: str = ""
+        preconditions: List[str] = field(default_factory=list)
+        steps: List[str] = field(default_factory=list)
+        impact: str = ""
+        mitigation: str = ""
+
+    @dataclass
+    class EnvironmentInfo:
+        """扫描环境信息。"""
+
+        os: str = ""
+        python_version: str = ""
+        tool_versions: Dict[str, str] = field(default_factory=dict)
+        target_app: Optional[TargetAppInfo] = None
+        scan_time: str = ""
+        scan_command: str = ""
+
+    @dataclass
+    class ReportStatistics:
+        """报告统计：总数 / 严重度 / 分类 / 覆盖度 / 耗时。"""
+
+        total_count: int = 0
+        by_severity: Dict[str, int] = field(default_factory=dict)
+        by_category: Dict[str, int] = field(default_factory=dict)
+        coverage_metrics: Dict[str, Any] = field(default_factory=dict)
+        scan_duration_seconds: float = 0.0
+
+    @dataclass
+    class ReportMetadata:
+        """报告元信息：标题 / 作者 / 密级 / 版本 / 日期。"""
+
+        title: str = "移动应用安全评估报告"
+        author: str = "玄鉴AI (fp_sentinel)"
+        classification: str = "内部资料"
+        version: str = "V1.0"
+        date: str = ""
+
+    @dataclass
+    class Appendix:
+        """附录：术语表 / 工具链信息 / 原始日志引用。"""
+
+        glossary: Dict[str, str] = field(default_factory=dict)
+        toolchain_info: Dict[str, Any] = field(default_factory=dict)
+        raw_logs_ref: str = ""
 
     @dataclass
     class MobileSecurityReport:
