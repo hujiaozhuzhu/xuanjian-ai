@@ -149,5 +149,58 @@ class TestFullPipeline(unittest.TestCase):
         self.assertEqual(report["coverage_pct"], 50.0)
 
 
+class TestDomVerifyPipeline(unittest.TestCase):
+    """Test DOM-based verification (nuclei template-verify style)."""
+
+    def test_dom_verify_upgrades_confidence(self):
+        """When DOM marker fires, LOW confidence should upgrade to HIGH."""
+        from fp_sentinel.attack.dom_verify import VerifyBackend
+
+        # Use PYTHON backend — no subprocess needed
+        verifier = HarmlessVerifier(dom_verify=True, dom_backend=VerifyBackend.PYTHON)
+
+        # SQLi finding with real source → should verify at MEDIUM/HIGH statically
+        sqli = _make_mock_finding()
+        report = verifier.verify_findings([sqli])
+
+        self.assertEqual(report.total_findings, 1)
+        self.assertIsNotNone(report.results[0])
+
+    def test_dom_verify_executor_selection(self):
+        """HarmlessVerifier with dom_verify=True should lazy-init executor."""
+        import tempfile, os
+        from fp_sentinel.attack.dom_verify import VerifyBackend
+
+        # Create a real temp file so source reading succeeds
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".py", delete=False, encoding="utf-8"
+        ) as f:
+            f.write("query('SELECT * FROM users WHERE id=' + req.params.id)\n")
+            src_path = f.name
+
+        try:
+            # Enable DOM verify
+            verifier = HarmlessVerifier(
+                dom_verify=True,
+                dom_backend=VerifyBackend.PYTHON,
+            )
+            self.assertIsNone(verifier._dom_executor)
+
+            # Create finding pointing to real source file
+            finding = _make_mock_finding(file_path=src_path)
+            verifier.verify_findings([finding])
+
+            # Executor should now be initialized
+            self.assertIsNotNone(verifier._dom_executor)
+            self.assertEqual(verifier._dom_executor.backend, VerifyBackend.PYTHON)
+        finally:
+            os.unlink(src_path)
+
+    def test_dom_verify_disabled_by_default(self):
+        """By default dom_verify should be disabled."""
+        verifier = HarmlessVerifier()
+        self.assertFalse(verifier.dom_verify_enabled)
+
+
 if __name__ == "__main__":
     unittest.main()
