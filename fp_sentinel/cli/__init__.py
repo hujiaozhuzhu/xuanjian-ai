@@ -180,6 +180,14 @@ try:
 except ImportError:  # noqa: BLE001 — 模块不可用时静默降级
     pass
 
+# 注册 API Knowledge Graph 子命令（GraphRAG 风格：schema 推断 + 图谱关联 + D3 可视化）
+try:
+    from .api_knowledge_commands import api_knowledge_app as _api_knowledge_app
+    if _api_knowledge_app is not None:
+        app.add_typer(_api_knowledge_app, name="api-knowledge", help="API Knowledge Graph (GraphRAG): schema 推断 / 图谱关联 / 可视化")
+except Exception:  # noqa: BLE001 — 模块/依赖不可用时静默降级
+    pass
+
 # 注册自适应误报优化引擎 v3.0 子命令
 # 注：fp_optimize_commands 是纯 click.Group；typer>=0.12 构建 Group 树时无法
 # 遍历 click.Group 子应用（AttributeError: 'Group' object has no attribute
