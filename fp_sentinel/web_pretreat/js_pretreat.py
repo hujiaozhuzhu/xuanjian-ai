@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["JsPrettier", "PackedType"]
+__all__ = ["JsPrettier", "PackedType", "extract_console_outputs"]
 
 # jsbeautifier 是可选依赖，缺失时降级正则
 try:
@@ -108,6 +108,24 @@ _PACKER_SIGNATURES: List[Tuple[PackedType, re.Pattern[str]]] = [
     ("obfuscator_io", re.compile(r"_0x[a-f0-9]{4,}", re.IGNORECASE)),
 ]
 
+# 增强的 Packer 特征 (v1.0.0 混淆代码端到端处理)
+_PACKER_DEEP_SIGNATURES: List[Tuple[PackedType, re.Pattern[str]]] = [
+    # JSFuck: ][ ... [ ... constructor
+    ("jsfuck", re.compile(r"\]\[.*\[.*constructor", re.IGNORECASE)),
+    # JSFuck: [][] 嵌套
+    ("jsfuck", re.compile(r"(\[\[\]\s*\]\s*){4,}")),
+    # JSFuck: 超长 fromCharCode
+    ("jsfuck", re.compile(r"String\.fromCharCode\([\d,\s]{20,}")),
+    # obfuscatorIO 变量重命名: _0xabcd_0xefgh 序列
+    ("obfuscator_io", re.compile(r"_0x[a-f0-9]{4,}_0x[a-f0-9]{4,}")),
+]
+
+# console 调用提取正则 — 捕获 level 和第一个字符串参数
+_CONSOLE_STRING_ARG_RE = re.compile(
+    r"""\bconsole\.(log|warn|error|debug|info)\s*\(\s*['"`]([^'"`]*?)['"`]""",
+    re.IGNORECASE,
+)
+
 
 @dataclass
 class JsPreprocessWarning:
@@ -132,6 +150,7 @@ class JsPreprocessResult:
     apis: List[Dict[str, str]] = field(default_factory=list)
     suspicious: List[Dict[str, str]] = field(default_factory=list)
     packer_type: str = "none"
+    console_outputs: List[Dict[str, str]] = field(default_factory=list)
 
 
 # ── 正则降级美化辅助 ──
@@ -435,7 +454,9 @@ class JsPrettier:
     def detect_packer(self, src: str) -> str:
         """识别 JS 的 packing 类型。
 
-        仅做静态特征匹配；如果特征命中则返回对应类型字符串，
+        先检查标准签名 (_PACKER_SIGNATURES), 再检查增强深度签名
+        (_PACKER_DEEP_SIGNATURES, 包含 JSFuck 和 obfuscatorIO 增强检测)。
+        如果特征命中则返回对应类型字符串，
         并在日志里提示"如需深入请配合专业反混淆器"。
 
         Parameters
@@ -446,16 +467,26 @@ class JsPrettier:
         Returns
         -------
         str
-            ``"eval_packed"`` / ``"url_encoded"`` / ``"packer_feng"`` /
+            ``"jsfuck"`` / ``"eval_packed"`` / ``"url_encoded"`` / ``"packer_feng"`` /
             ``"webpack"`` / ``"obfuscator_io"`` / ``"unknown"`` / ``"none"``。
         """
         if not src:
             return "none"
 
+        # 先检查标准签名
         for packer_type, pattern in _PACKER_SIGNATURES:
             if pattern.search(src):
                 logger.info(
                     "检测到 %s packing 特征；如需深入解混淆请配合专业反混淆器 (de4js / JStillery)。",
+                    packer_type,
+                )
+                return packer_type
+
+        # 再检查增强深度签名 (JSFuck / obfuscatorIO 增强)
+        for packer_type, pattern in _PACKER_DEEP_SIGNATURES:
+            if pattern.search(src):
+                logger.info(
+                    "检测到 %s packing 特征(深度检测)；如需深入解混淆请配合专业反混淆器。",
                     packer_type,
                 )
                 return packer_type
@@ -481,7 +512,7 @@ class JsPrettier:
         """完整预处理流水线。
 
         对给定的 JS 源码依次执行: detect_packer -> prettify -> extract_strings ->
-        find_api_patterns -> find_suspicious，并把所有结果打包返回。
+        find_api_patterns -> find_suspicious -> extract_console_outputs，并把所有结果打包返回。
 
         对 >5 MB 文件自动设置 memory_warning。
         """
@@ -499,6 +530,7 @@ class JsPrettier:
         strings = self.extract_strings(prettified)
         apis = self.find_api_patterns(prettified)
         suspicious = self.find_suspicious(prettified)
+        console_outputs = extract_console_outputs(prettified)
 
         return JsPreprocessResult(
             original_src=src,
@@ -509,7 +541,71 @@ class JsPrettier:
             apis=apis,
             suspicious=suspicious,
             packer_type=packer,
+            console_outputs=console_outputs,
         )
+
+
+# ── 模块级函数 ──
+
+def extract_console_outputs(src: str) -> List[Dict[str, str]]:
+    """从 JS 源码中提取 console.log/warn/error 调用的第一个字符串参数。
+
+    通常 developer 会将敏感日志 (token/password/用户数据) 输出到控制台,
+    此类信息在生产环境中泄露构成安全风险。
+
+    Parameters
+    ----------
+    src:
+        JS 源码 (通常先经过 :meth:`JsPrettier.prettify` 更方便识别).
+
+    Returns
+    -------
+    list[dict]
+        每项包含 ``level`` (log/warn/error/debug/info) / ``message`` (第一个字符串参数) /
+        ``line`` / ``snippet`` / ``tag`` (分类: sensitive / normal / error_related)。
+    """
+    if not src:
+        return []
+
+    results: List[Dict[str, str]] = []
+    seen: set = set()
+
+    for match in _CONSOLE_STRING_ARG_RE.finditer(src):
+        level = match.group(1)
+        message = match.group(2)
+
+        if not message or len(message) > 500:
+            continue
+
+        line = src[: match.start()].count("\n") + 1
+        key = f"{level}:{line}:{message}"
+        if key in seen:
+            continue
+        seen.add(key)
+
+        snippet = _make_snippet(src, match.start(), match.end())
+
+        # 初判标签
+        lower = message.lower()
+        if any(kw in lower for kw in (
+            "password", "passwd", "token", "secret", "apikey", "api_key",
+            "auth", "credential", "ssn", "credit", "card",
+        )):
+            tag = "sensitive"
+        elif any(kw in lower for kw in ("error", "exception", "fail", "trace")):
+            tag = "error_related"
+        else:
+            tag = "normal"
+
+        results.append({
+            "level": level,
+            "message": message,
+            "line": str(line),
+            "snippet": snippet,
+            "tag": tag,
+        })
+
+    return results
 
 
 # ── 内部辅助函数 ──

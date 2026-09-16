@@ -17,6 +17,7 @@ from .rules import (
     UNSAFE_DOM_ENHANCED_V230,
     TYPESCRIPT_RULES_V230,
 )
+from .react_rules import RULES as REACT_RULES
 
 __all__ = [
     "JS_SECURITY_RULES",
@@ -30,4 +31,5 @@ __all__ = [
     "SECRETS_ENHANCED_V230",
     "UNSAFE_DOM_ENHANCED_V230",
     "TYPESCRIPT_RULES_V230",
+    "REACT_RULES",
 ]

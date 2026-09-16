@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional
 
 from .base import BaseScanner
 from ..models import ScanResult, ScanTool, Severity
-from ..rules.js import JS_SECURITY_RULES, JS_SECURITY_GUARD_PATTERNS
+from ..rules.js import JS_SECURITY_RULES, JS_SECURITY_GUARD_PATTERNS, REACT_RULES
 from ..preprocessors import looks_heavily_obfuscated, preprocess_javascript
 
 logger = logging.getLogger(__name__)
@@ -122,6 +122,13 @@ class JSScanner(BaseScanner):
         results.extend(rule_results)
 
         # v2.5.1: 规则扫描完成后立即清理缓存
+        self._evict_cache_if_needed(force=True)
+
+        # 1.5 React/Angular 框架专属规则扫描
+        react_results = await self._scan_react_files(files)
+        results.extend(react_results)
+
+        # v2.5.1: React 规则扫描后清理缓存
         self._evict_cache_if_needed(force=True)
 
         # 2. 敏感信息检测
@@ -248,6 +255,79 @@ class JSScanner(BaseScanner):
             if files_since_cleanup >= 10:
                 self._evict_cache_if_needed()
                 files_since_cleanup = 0
+
+        return results
+
+    async def _scan_react_files(self, files: List[Path]) -> List[ScanResult]:
+        """使用 React/Angular 框架专属规则扫描文件
+
+        扫描范围: .jsx / .tsx / .js / .ts 文件，应用 REACT_RULES (33 条)。
+        复用 _scan_with_rules 中现有的 compile/guard/false_positive 框架逻辑。
+        """
+        results: List[ScanResult] = []
+
+        # 仅对可能含前端框架代码的文件应用 React 规则
+        react_extensions = {".jsx", ".tsx", ".js", ".ts", ".mjs"}
+        react_files = [f for f in files if f.suffix.lower() in react_extensions]
+        if not react_files:
+            return results
+
+        for file_path in react_files:
+            try:
+                content, preprocess = self._content_for_scan(file_path)
+                if not content:
+                    continue
+
+                lines = content.split("\n")
+                for rule in REACT_RULES:
+                    try:
+                        # 文件模式匹配
+                        if rule.file_pattern and not self._match_file_pattern(
+                            str(file_path), rule.file_pattern
+                        ):
+                            continue
+
+                        # 代码模式匹配
+                        if rule.code_pattern:
+                            pattern = self._compile_rule_pattern(rule.code_pattern)
+                            if pattern is None:
+                                continue
+                            for line_num, line in enumerate(lines, 1):
+                                if not pattern.search(line):
+                                    continue
+                                # 行内误报指标
+                                if self._check_false_positive_indicators(
+                                    line, rule.false_positive_indicators
+                                ):
+                                    continue
+
+                                metadata = {
+                                    "category": rule.category,
+                                    "confidence": rule.confidence,
+                                    "scanner": "js_scanner",
+                                    "framework": "react_angular",
+                                }
+                                metadata.update(preprocess.location_metadata(line_num))
+                                results.append(ScanResult(
+                                    tool=ScanTool.JS_SCANNER,
+                                    rule_id=rule.rule_id,
+                                    file=str(file_path),
+                                    line=1 if preprocess.used_beautifier else line_num,
+                                    code=line.strip()[:200],
+                                    severity=SEVERITY_MAP.get(rule.severity, Severity.MEDIUM),
+                                    message=rule.description,
+                                    cwe=rule.cwe,
+                                    owasp=rule.owasp,
+                                    metadata=metadata,
+                                ))
+                    except Exception as e:
+                        logger.warning(
+                            f"React rule {getattr(rule, 'rule_id', '?')} failed on "
+                            f"{file_path}, skipped: {e}"
+                        )
+                        continue
+            except Exception as e:
+                logger.error(f"Error scanning React rules on {file_path}: {e}")
 
         return results
 

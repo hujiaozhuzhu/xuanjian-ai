@@ -13,7 +13,7 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from fp_sentinel.mobile_common import configure_logging
 
@@ -44,6 +44,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p_full.add_argument("--output", default="./reports/web/")
     p_full.add_argument("--format", default="excel,word,html")
     p_full.add_argument("--cvss", action="store_true")
+    p_full.add_argument("--verify", action="store_true")
 
     return parser
 
@@ -90,12 +91,28 @@ def _full(args: argparse.Namespace) -> int:
         builder.add_from_nuclei_json(Path(args.zap))
     report = builder.build(target=args.url)
 
+    # ── JS 预处理后处理: 将 JsPrettier.process() 结果 dump 到输出目录 ──
+    if args.js:
+        try:
+            _run_js_pretreat(args.js, args.output)
+        except Exception as exc:
+            logger.warning("JS pretreat post-processing failed: %s", exc)
+
+    # ── CVSS 评分 ──
     if args.cvss:
         from fp_sentinel.mobile_reporting.cvss import auto_score
 
         for finding in report.findings:
             auto_score(finding)
 
+    # ── 自动验证 ──
+    if args.verify:
+        try:
+            _run_verification(report, args.output)
+        except Exception as exc:
+            logger.warning("Verification failed: %s", exc)
+
+    # ── 报告生成 ──
     from fp_sentinel.mobile_reporting import generate_report
 
     formats = [f.strip() for f in args.format.split(",") if f.strip()]
@@ -103,6 +120,86 @@ def _full(args: argparse.Namespace) -> int:
     for fmt, path in generated.items():
         logger.info("%s: %s", fmt.upper(), path)
     return 0
+
+
+def _run_js_pretreat(js_path: str, output_dir: str) -> None:
+    """对 JS 文件运行 JsPrettier 预处理并 dump 结果到 <output>/js_prettify/。"""
+    from fp_sentinel.web_pretreat.js_pretreat import JsPrettier
+
+    js_dir = Path(js_path)
+    if not js_dir.exists():
+        logger.warning("JS path not found: %s", js_path)
+        return
+
+    out_base = Path(output_dir) / "js_prettify"
+    out_base.mkdir(parents=True, exist_ok=True)
+
+    extensions = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs"}
+    skip_dirs = {"node_modules", ".git", "dist", "build"}
+
+    prettier = JsPrettier()
+    processed = 0
+
+    files = (
+        f for f in js_dir.rglob("*")
+        if f.suffix.lower() in extensions and f.is_file()
+        and not any(skip in f.parts for skip in skip_dirs)
+    )
+
+    for f in files:
+        try:
+            content = f.read_text(encoding="utf-8", errors="ignore")
+            result = prettier.process(content)
+            rel = f.relative_to(js_dir)
+            out_file = out_base / f"{rel}.json"
+            out_file.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "file": str(rel),
+                "packer_type": result.packer_type,
+                "used_beautifier": result.used_beautifier,
+                "warnings": [{"category": w.category, "message": w.message} for w in result.warnings],
+                "strings_count": len(result.strings),
+                "apis_count": len(result.apis),
+                "suspicious_count": len(result.suspicious),
+                "console_outputs_count": len(result.console_outputs),
+                "suspicious": result.suspicious[:20],
+                "console_outputs": result.console_outputs[:20],
+                "apis": result.apis[:10],
+            }
+            out_file.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            processed += 1
+        except Exception as exc:
+            logger.warning("Failed to pretreat %s: %s", f, exc)
+
+    logger.info("JS pretreat post-processing: %d files processed -> %s", processed, out_base)
+
+
+def _run_verification(report: Any, output_dir: str) -> None:
+    """对每条 finding 运行 HarmlessVerifier 验证并生成 verification_report.json。"""
+    from fp_sentinel.attack.harmless_verifier import HarmlessVerifier
+
+    findings = getattr(report, "findings", [])
+    if not findings:
+        logger.info("No findings to verify")
+        return
+
+    verifier = HarmlessVerifier()
+    ver_report = verifier.verify_findings(findings)
+
+    out_path = Path(output_dir) / "verification_report.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "summary": ver_report.summary(),
+        "results": [r.to_dict() for r in ver_report.results],
+    }
+    out_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    logger.info("Verification report -> %s", out_path)
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -152,6 +249,7 @@ try:
         zap: Optional[str] = typer.Option(None, "--zap"),
         js: Optional[str] = typer.Option(None, "--js"),
         cvss: bool = typer.Option(False, "--cvss"),
+        verify: bool = typer.Option(False, "--verify"),
     ) -> None:
         argv = ["full", "--url", url, "--output", output, "--format", format]
         if burp:
@@ -164,6 +262,8 @@ try:
             argv += ["--js", js]
         if cvss:
             argv.append("--cvss")
+        if verify:
+            argv.append("--verify")
         raise typer.Exit(main(argv))
 
 except ImportError:  # pragma: no cover

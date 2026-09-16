@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -41,8 +42,14 @@ def recommend(
                              help="分析目标: encrypt-trace/request-plaintext/signature-bypass/root-detection/generic"),
     top_n: int = typer.Option(10, "--top", "-n", help="推荐 Top-N 点位"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="结果 JSON 输出文件"),
+    export_format: Optional[str] = typer.Option(None, "--export-format",
+        help="导出捕获事件格式: har/jsonl/summary（默认 har；不指定则不导出）"),
 ):
-    """自动化推荐 Hook 点位（七技法 + 关键性评分排序）。"""
+    """自动化推荐 Hook 点位（七技法 + 关键性评分排序）。
+
+    当指定 ``--export-format`` 时，将 HookRecommendation 的 hook_points
+    反序列化为 CaptureEvent 并调用 export_events 输出到 ``--output``。
+    """
     configure_logging()
     from .core.base import HookLocator
     from .models import HookRecommendation
@@ -63,6 +70,10 @@ def recommend(
 
     _write_json_output(output, rec.to_dict())
 
+    # ── 事件导出 ──
+    if export_format:
+        _export_events_from_recommendation(rec, output, export_format)
+
 
 @hook_app.command()
 def technique(
@@ -71,8 +82,10 @@ def technique(
     goal: str = typer.Option("generic", "--goal", "-g", help="分析目标"),
     output: Optional[str] = typer.Option(None, "--output", "-o", help="结果 JSON 输出文件"),
     script: Optional[str] = typer.Option(None, "--script", help="同时导出 Frida 脚本到该路径"),
+    export_format: Optional[str] = typer.Option(None, "--export-format",
+        help="导出捕获事件格式: har/jsonl/summary（默认 har；不指定则不导出）"),
 ):
-    """执行单一技法（独立可运行，含脚本模板导出）。"""
+    """执行单一技法（独立可运行，含脚本模板导出 + 事件导出）。"""
     configure_logging()
     from .core.base import HookLocator
 
@@ -93,6 +106,11 @@ def technique(
         src = build_technique(name, goal=goal).generate_frida_script(hook_points)
         Path(script).write_text(src, encoding="utf-8")
         typer.echo(f"\nFrida 脚本已导出: {script}")
+
+    # ── 事件导出 ──
+    if export_format:
+        events = _hook_points_to_events(result.ranked())
+        _export_events(events, output, export_format, suffix=f"_technique_{name}")
 
 
 @hook_app.command()
@@ -161,6 +179,49 @@ def verify(
         )
         all_ok = all_ok and verdict["verified"]
     raise typer.Exit(code=0 if all_ok else 1)
+
+
+# ────────────────────────── 事件导出辅助 ──────────────────────────
+
+def _hook_points_to_events(points) -> list:
+    """将 HookPoint 列表反序列化为 CaptureEvent 字典列表。
+
+    每条事件用 HookPoint 的元数据构建，缺失字段给安全默认值。
+    """
+    events: list = []
+    for hp in points:
+        events.append({
+            "timestamp": 0.0,
+            "protocol": "native" if hp.technique in ("keyword", "log") else "http",
+            "source": hp.source or "static",
+            "method": hp.method_name or "",
+            "args": [hp.class_name, *(hp.strings_matched or [])],
+            "retval": hp.reason or "",
+            "callchain": list(hp.call_chain or []),
+        })
+    return events
+
+
+def _export_events_from_recommendation(rec, output: Optional[str], export_format: str) -> None:
+    """从 HookRecommendation 导出事件到文件。"""
+    events = _hook_points_to_events(rec.hook_points)
+    _export_events(events, output, export_format)
+
+
+def _export_events(events: list, output: Optional[str], export_format: str, suffix: str = "") -> None:
+    """统一事件导出：按后缀生成默认输出路径。"""
+    from .core.capture_exporter import export_events
+
+    fmt = (export_format or "har").strip().lower()
+    outfile = output
+    if outfile:
+        base, ext = os.path.splitext(outfile)
+        ext_map = {"har": ".har", "jsonl": ".jsonl", "summary": ".md"}
+        outfile = base + suffix + ext_map.get(fmt, ext)
+    else:
+        outfile = os.path.join(".", f"capture{suffix}.{fmt}")
+    path = export_events(events, outfile, fmt)
+    typer.echo(f"\n事件已导出 ({fmt}): {path}")
 
 
 # ────────────────────────── 辅助 ──────────────────────────

@@ -1,10 +1,14 @@
-"""Android Java 层反编译引擎（jadx 优先，androguard 兜底）。
+"""Android Java 层反编译引擎（jadx 优先，androguard 兜底，baksmali 第三级兜底）。
 
 策略：
 1. 若系统安装了 jadx，调用其命令行产出高质量 Java 源码；
 2. jadx 不可用或执行失败时，优雅降级到 androguard 纯 Python 解析，
    产出结构化代码大纲（outline：类头/字段/方法签名/访问标志），
-   并支持字符串表/调用/交叉引用等全部搜索能力。
+   并支持字符串表/调用/交叉引用等全部搜索能力；
+3. androguard 也失败时，第三级兜底：
+   a) 若 baksmali CLI 可用，调用 ``baksmali disassemble`` 生成 stock smali；
+   b) 若 baksmali 不可用但 .dex 存在，回退调用 ``DexBaksmali.parse_dex``
+      + ``format_method_baksmali`` 生成 smali。
 
 安全约束（红线 M3）：全程只读，不修改原始 APK；jadx 输出只写入
 DecompileConfig.output_dir 指定的独立目录。
@@ -242,6 +246,17 @@ class AndroidJavaDecompiler(Decompiler):
                     )
             except Exception as exc:  # androguard 解析失败
                 result.add_error(f"androguard 解析失败: {exc}")
+                # ── 第三级兜底：baksmali CLI / DexBaksmali 纯 Python ──
+                result.add_warning("尝试 baksmali 第三级兜底解析")
+                try:
+                    baksmali_ok = await asyncio.to_thread(
+                        self._decompile_with_baksmali, cfg, result
+                    )
+                    if baksmali_ok:
+                        decompiled = True
+                        result.engine_used = "baksmali"
+                except Exception as bak_exc:
+                    result.add_error(f"baksmali 兜底也失败: {bak_exc}")
 
         if cfg.include_manifest:
             self._try_parse_manifest(result)
@@ -313,6 +328,162 @@ class AndroidJavaDecompiler(Decompiler):
                 self._write_file(os.path.join(out_dir, rel), content)
             count += 1
         self._source_files = {sf.relative_path: sf for sf in result.source_files}
+
+    # ──────────────── baksmali 第三级兜底 ────────────────
+
+    @classmethod
+    def find_baksmali(cls) -> Optional[str]:
+        """探测 baksmali CLI 是否可用。
+
+        依次检查 PATH 中的 ``baksmali`` / ``baksmali.bat`` / ``baksmali.jar``，
+        以及常见安装路径。
+        """
+        for exe in ("baksmali", "baksmali.bat", "baksmali.cmd", "baksmali.jar"):
+            path = shutil.which(exe)
+            if path:
+                return path
+        return None
+
+    @staticmethod
+    def _extract_dex_from_apk(target_path: str) -> Optional[str]:
+        """从 APK 中提取 classes.dex 到临时文件，返回临时文件路径。
+
+        若目标路径本身已不是 APK（即为独立 .dex），直接返回原路径。
+        """
+        import zipfile
+
+        if target_path.lower().endswith(".dex"):
+            return target_path
+        if not zipfile.is_zipfile(target_path):
+            return None
+        try:
+            with zipfile.ZipFile(target_path) as zf:
+                for name in ("classes.dex", "classes2.dex", "classes3.dex"):
+                    if name in zf.namelist():
+                        data = zf.read(name)
+                        tmp_dir = os.path.join(
+                            os.path.dirname(target_path), "_baksmali_dex"
+                        )
+                        os.makedirs(tmp_dir, exist_ok=True)
+                        out_path = os.path.join(tmp_dir, name)
+                        with open(out_path, "wb") as fh:
+                            fh.write(data)
+                        return out_path
+        except Exception:
+            return None
+        return None
+
+    def _decompile_with_baksmali(self, cfg: DecompileConfig, result: DecompileResult) -> bool:
+        """第三级兜底：baksmali CLI 或 DexBaksmali 纯 Python 解析。
+
+        优先级：
+        1. baksmali CLI 可用 → 调用 baksmali disassemble
+        2. 不可用但 .dex 存在 → DexBaksmali.parse_dex + format_method_baksmali
+        """
+        dex_path = self._extract_dex_from_apk(self.target_path)
+        if dex_path is None:
+            result.add_warning("无法定位 .dex 文件（APK 不含 classes.dex 或非 APK/DEX 文件）")
+            return False
+
+        # 尝试 baksmali CLI
+        baksmali_path = self.find_baksmali()
+        if baksmali_path:
+            return self._decompile_with_baksmali_cli(baksmali_path, dex_path, cfg, result)
+
+        # 回退到纯 Python DexBaksmali
+        return self._decompile_with_dex_baksmali(dex_path, cfg, result)
+
+    def _decompile_with_baksmali_cli(
+        self, baksmali_path: str, dex_path: str, cfg: DecompileConfig, result: DecompileResult
+    ) -> bool:
+        """调用 baksmali 命令行生成 stock smali。"""
+        out_dir = cfg.output_dir or os.path.join(
+            os.path.dirname(self.target_path or ".") or ".", "_baksmali_out"
+        )
+        os.makedirs(out_dir, exist_ok=True)
+        try:
+            # 判断 baksmali_path 是 jar 还是直接可执行
+            if baksmali_path.endswith(".jar"):
+                cmd = ["java", "-jar", baksmali_path, "disassemble", "--classes", dex_path, "-o", out_dir]
+            else:
+                cmd = [baksmali_path, "disassemble", "--classes", dex_path, "-o", out_dir]
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=cfg.timeout_sec,
+                check=False,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            result.add_warning(f"baksmali CLI 调用异常: {exc}")
+            return False
+
+        if proc.returncode != 0:
+            result.add_warning(
+                f"baksmali CLI 返回码 {proc.returncode}: "
+                f"{(proc.stderr or proc.stdout)[:200]}"
+            )
+            return False
+
+        count = self._load_source_dir(out_dir, result, language="smali", cfg=cfg)
+        if count == 0:
+            result.add_warning("baksmali CLI 执行成功但未产出 smali 文件")
+            return False
+        result.add_warning("已使用 baksmali CLI 兜底生成 smali（第三级兜底）")
+        return True
+
+    def _decompile_with_dex_baksmali(
+        self, dex_path: str, cfg: DecompileConfig, result: DecompileResult
+    ) -> bool:
+        """纯 Python DexBaksmali 解析后端。
+
+        baksmali CLI 不可用时使用；生成 baksmali 风格的 smali 文本。
+        """
+        from .baksmali_fallback import DexBaksmali
+
+        try:
+            with open(dex_path, "rb") as fh:
+                dex_bytes = fh.read()
+        except OSError as exc:
+            result.add_warning(f"读取 DEX 失败: {exc}")
+            return False
+
+        parser = DexBaksmali()
+        try:
+            parser.parse_dex(dex_bytes)
+        except ValueError as exc:
+            result.add_warning(f"DexBaksmali 解析失败: {exc}")
+            return False
+
+        out_dir = cfg.output_dir
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
+        count = 0
+        for cls in parser.all_classes:
+            if count >= cfg.max_source_files:
+                result.add_warning(f"源码文件数超过上限 {cfg.max_source_files}，已截断")
+                break
+            rel = f"baksmali/{cls.class_name.lstrip('L').rstrip(';')}.smali"
+            content = parser.format_class_baksmali(cls)
+            result.source_files.append(
+                SourceFile(
+                    path=os.path.join(out_dir, rel) if out_dir else rel,
+                    relative_path=rel,
+                    content=content,
+                    language="smali",
+                )
+            )
+            if out_dir:
+                self._write_file(os.path.join(out_dir, rel), content)
+            count += 1
+
+        if count == 0:
+            result.add_warning("DexBaksmali 解析成功但未产出文件")
+            return False
+        self._source_files = {sf.relative_path: sf for sf in result.source_files}
+        result.add_warning("已使用 DexBaksmali 纯 Python 解析兜底（第三级兜底，零外部依赖）")
+        return True
 
     @staticmethod
     def _write_file(path: str, content: str) -> None:
