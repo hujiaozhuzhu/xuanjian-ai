@@ -5,7 +5,9 @@ Provides encrypted local storage for authenticated sessions.
 Supports save/load/clear with automatic expiry checking.
 
 Security:
-- S4: Session data is encrypted at rest (XOR cipher with machine-derived key)
+- S4: Session data is encrypted at rest using Fernet (AES-CBC + HMAC-SHA256)
+  with PBKDF2-HMAC-SHA256 (100k iterations). Falls back to DPAPI on Windows
+  or XOR obfuscation only when no crypto library is available.
 - Credentials are NEVER stored - only session tokens
 - All session data stays on local machine
 """
@@ -47,14 +49,94 @@ class SessionStore:
         self._derive_key()
 
     def _derive_key(self) -> None:
+        """Derive an encryption key with the best available backend.
+
+        Priority: Fernet (PBKDF2+AES+HMAC) > Windows DPAPI > XOR obfuscation.
+        """
         try:
             login_name = os.getlogin()
         except (OSError, AttributeError):
             login_name = "default"
-        machine_id = f"{os.name}-{login_name}-{os.getcwd()}"
-        self._key = hashlib.sha256(machine_id.encode()).digest()
+        self._salt = hashlib.sha256(f"{os.name}-{login_name}-{os.getcwd()}".encode()).digest()
 
-    def _encrypt(self, data: str) -> str:
+        # Attempt 1: Fernet (cryptography package)
+        try:
+            import base64  # noqa: PLC0415
+            from cryptography.fernet import Fernet  # noqa: PLC0415
+            from cryptography.hazmat.primitives import hashes  # noqa: PLC0415
+            from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # noqa: PLC0415
+            kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=self._salt[:16], iterations=100_000)
+            self._fernet = Fernet(base64.urlsafe_b64encode(kdf.derive(self._salt)))
+            self._encrypt = self._fernet_encrypt
+            self._decrypt = self._fernet_decrypt
+            return
+        except ImportError:
+            pass
+
+        # Attempt 2: Windows DPAPI
+        if os.name == "nt":
+            try:
+                import ctypes  # noqa: PLC0415
+                self._encrypt = self._dpapi_encrypt
+                self._decrypt = self._dpapi_decrypt
+                return
+            except ImportError:
+                pass
+
+        # Attempt 3: XOR obfuscation (last resort)
+        logger.warning("SessionStore: no strong crypto; falling back to XOR obfuscation")
+        self._key = self._salt
+        self._encrypt = self._xor_encrypt
+        self._decrypt = self._xor_decrypt
+
+    def _fernet_encrypt(self, data: str) -> str:
+        import base64  # noqa: PLC0415
+        token = self._fernet.encrypt(data.encode("utf-8"))
+        return self.ENCRYPTION_MARKER + base64.b64encode(token).decode()
+
+    def _fernet_decrypt(self, data: str) -> str:
+        import base64  # noqa: PLC0415
+        if not data.startswith(self.ENCRYPTION_MARKER):
+            raise ValueError("Invalid session data format")
+        token = base64.b64decode(data[len(self.ENCRYPTION_MARKER):])
+        return self._fernet.decrypt(token).decode("utf-8")
+
+    @staticmethod
+    def _dpapi_encrypt(data: str) -> str:
+        import ctypes  # noqa: PLC0415
+        import ctypes.wintypes  # noqa: PLC0415
+        import base64  # noqa: PLC0415
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+        blob_in = DATA_BLOB(len(data), ctypes.c_char_p(data.encode("utf-8")))
+        blob_out = DATA_BLOB()
+        if ctypes.windll.crypt32.CryptProtectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            encrypted = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+            return "DPAPI" + base64.b64encode(encrypted).decode()
+        raise RuntimeError("DPAPI encryption failed")
+
+    @staticmethod
+    def _dpapi_decrypt(data: str) -> str:
+        import ctypes  # noqa: PLC0415
+        import ctypes.wintypes  # noqa: PLC0415
+        import base64  # noqa: PLC0415
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
+        raw = base64.b64decode(data[5:])
+        blob_in = DATA_BLOB(len(raw), ctypes.cast(ctypes.c_char_p(raw), ctypes.POINTER(ctypes.c_char)))
+        blob_out = DATA_BLOB()
+        if ctypes.windll.crypt32.CryptUnprotectData(
+            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
+        ):
+            decrypted = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
+            return decrypted.decode("utf-8")
+        raise RuntimeError("DPAPI decryption failed")
+
+    def _xor_encrypt(self, data: str) -> str:
         key = self._key
         encrypted = bytearray()
         for i, ch in enumerate(data.encode("utf-8")):
@@ -62,7 +144,7 @@ class SessionStore:
         import base64
         return self.ENCRYPTION_MARKER + base64.b64encode(bytes(encrypted)).decode()
 
-    def _decrypt(self, data: str) -> str:
+    def _xor_decrypt(self, data: str) -> str:
         if not data.startswith(self.ENCRYPTION_MARKER):
             raise ValueError("Invalid session data format")
         import base64

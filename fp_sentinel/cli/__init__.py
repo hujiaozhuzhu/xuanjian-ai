@@ -83,6 +83,17 @@ except Exception as _mobile_err:  # pragma: no cover - 防御性
 
     _logging.getLogger(__name__).debug("mobile_insight CLI 注册失败: %s", _mobile_err)
 
+# ---- mobile audit（一体化：insight → 报告）----
+try:
+    from ..mobile_audit import mobile_audit_app as _mobile_audit_app
+
+    if _mobile_audit_app is not None:
+        _v4_mobile_app.add_typer(_mobile_audit_app, name="audit")
+except Exception as _audit_err:  # pragma: no cover - 防御性
+    import logging as _logging
+
+    _logging.getLogger(__name__).debug("mobile_audit CLI 注册失败: %s", _audit_err)
+
 app.add_typer(_v4_mobile_app, name="mobile")
 
 @app.command("mcp")
@@ -107,6 +118,15 @@ try:
     from .browser_commands import app as browser_app
     app.add_typer(browser_app, name="browser", help="浏览器自动化 (JSRPC)")
 except ImportError:
+    pass
+
+# 注册 Web 一体化审计子命令 (discover / full)
+try:
+    from ..web_audit import web_audit_app as _web_audit_app
+
+    if _web_audit_app is not None:
+        app.add_typer(_web_audit_app, name="web-audit", help="Web 一体化审计 (API 发现→证据→报告)")
+except Exception:  # pragma: no cover - 防御性
     pass
 
 # 注册知识图谱子命令 (v2.5.1 —— 查询插件 + 自动归档)

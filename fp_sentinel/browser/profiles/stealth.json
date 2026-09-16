@@ -1,6 +1,6 @@
 {
     "name": "stealth",
-    "description": "反检测隐身模式",
+    "description": "反检测隐身模式 — 完整指纹(时区/语言/Canvas/WebGL/ClientRects/时区)",
     "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
     "viewport": {
         "width": 1920,
@@ -10,20 +10,48 @@
         "platform": "Win32",
         "languages": ["zh-CN", "zh", "en-US", "en"],
         "hardwareConcurrency": 8,
-        "deviceMemory": 8
+        "deviceMemory": 8,
+        "maxTouchPoints": 0,
+        "doNotTrack": null
     },
     "screen": {
         "width": 1920,
         "height": 1080,
-        "colorDepth": 24
+        "availWidth": 1920,
+        "availHeight": 1040,
+        "colorDepth": 24,
+        "pixelDepth": 24
+    },
+    "timezone": {
+        "zone": "Asia/Shanghai",
+        "offset": -480,
+        "locale": "zh-CN"
     },
     "webgl": {
         "vendor": "Intel Inc.",
-        "renderer": "Intel(R) Iris(TM) Graphics 6100"
+        "renderer": "Intel(R) Iris(TM) Graphics 6100",
+        "unmasked_vendor": "Google Inc. (Intel)",
+        "unmasked_renderer": "ANGLE (Intel, Intel(R) Iris(TM) Graphics 6100 Direct3D11 vs_5_0 ps_5_0, D3D11)"
     },
+    "canvas": {
+        "noise_seed": 12345,
+        "method": "text_fill_add_gradient_noise"
+    },
+    "client_rects": {
+        "noise_x": 0.1,
+        "noise_y": 0.1,
+        "method": "getBoundingClientRect"
+    },
+    "fonts": [
+        "Arial", "Calibri", "Cambria", "Consolas", "Microsoft YaHei",
+        "Segoe UI", "Tahoma", "Times New Roman", "Verdana"
+    ],
     "plugins": [
         "Chrome PDF Plugin",
         "Chrome PDF Viewer",
         "Native Client"
-    ]
+    ],
+    "webrtc": {
+        "policy": "default_public_interface_only"
+    }
 }

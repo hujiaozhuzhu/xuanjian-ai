@@ -307,23 +307,64 @@ class HarmlessVerifier:
         return False, ""
 
     def _rule_id_to_vuln_type(self, rule_id: str) -> str:
-        """Map rule_id to vulnerability type key."""
-        rid = rule_id.lower()
-        mappings = [
-            (["sql", "sqli", "injection.sql"], "sqli"),
-            (["cmd", "command", "os.system", "injection.command"], "cmd_injection"),
-            (["xss", "cross.site", "domxss"], "xss"),
-            (["path", "traversal", "lfi"], "path_traversal"),
-            (["ssrf", "server.side"], "ssrf"),
-            (["deser", "deserial", "readobject", "unserialize", "pickle", "yaml.load"], "deserialization"),
-            (["ssti", "template"], "ssti"),
-            (["xxe", "xml"], "xxe"),
-            (["crypto", "md5", "sha1", "weak.*hash"], "crypto_weak"),
-            (["hardcoded", "secret", "credential", "password.*="], "hardcoded_secret"),
+        """Map rule_id to vulnerability type key.
+
+        Uses prefix/substring matching on the dotted prefix of rule_id
+        (e.g. ``python.lang.security.injection.sql`` → ``sql``),
+        avoiding naive substring matches that misclassify unrelated rules.
+        """
+        rid = rule_id.lower().strip()
+        if not rid:
+            return ""
+        # Take the prefix up to the last segment to isolate the vuln category.
+        prefix = rid.rsplit(".", 1)[0] if "." in rid else rid
+
+        # Prefix-based ordered matching — more specific matches first
+        prefix_mappings = [
+            ("injection.sql", "sqli"),
+            ("injection.command", "cmd_injection"),
+            ("injection.template", "ssti"),
+            ("injection.xpath", "xxe"),
+            ("injection.xml", "xxe"),
+            ("ssrf", "ssrf"),
+            ("xss", "xss"),
+            ("domxss", "xss"),
+            ("path.traversal", "path_traversal"),
+            ("file.traversal", "path_traversal"),
+            ("deserialization", "deserialization"),
+            ("yaml.load", "deserialization"),
+            ("pickle", "deserialization"),
+            ("crypto.weak", "crypto_weak"),
+            ("hash.md5", "crypto_weak"),
+            ("hash.sha1", "crypto_weak"),
+            ("hardcoded.secret", "hardcoded_secret"),
+            ("hardcoded.credential", "hardcoded_secret"),
+            ("credential.password", "hardcoded_secret"),
         ]
-        for keywords, vtype in mappings:
-            if any(k in rid for k in keywords):
+        for pfx, vtype in prefix_mappings:
+            if prefix.endswith(pfx) or rid.endswith(pfx):
                 return vtype
+
+        # Substring fallback — only when no prefix match found
+        substring_mappings = [
+            ("sqli", "sqli"),
+            ("sql_injection", "sqli"),
+            ("cmd_injection", "cmd_injection"),
+            ("cross_site", "xss"),
+            ("traversal", "path_traversal"),
+            ("server_side_request", "ssrf"),
+            ("unserialize", "deserialization"),
+            ("readobject", "deserialization"),
+            ("template_injection", "ssti"),
+            ("entity_expansion", "xxe"),
+            ("weak_hash", "crypto_weak"),
+            ("weak_crypto", "crypto_weak"),
+            ("hardcoded_password", "hardcoded_secret"),
+        ]
+        for substr, vtype in substring_mappings:
+            if substr in rid:
+                return vtype
+
         return ""
 
     def _build_verification_steps(

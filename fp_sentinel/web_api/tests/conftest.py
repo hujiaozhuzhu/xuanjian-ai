@@ -6,8 +6,6 @@
 from __future__ import annotations
 
 import json
-import sys
-import types
 from pathlib import Path
 from typing import Any, Dict, List
 from unittest.mock import MagicMock
@@ -15,83 +13,16 @@ from unittest.mock import MagicMock
 import pytest
 
 # ---------------------------------------------------------------------------
-# 构造回退存根（当正式模型不可用时使用）
-# ---------------------------------------------------------------------------
-
-
-def _build_fallback_models() -> types.ModuleType:
-    """构造 FindingReport / Evidence 存根模块。
-
-    Returns:
-        types.ModuleType: 包含存根的虚拟模块。
-    """
-    from dataclasses import dataclass, field
-
-    mod = types.ModuleType("fallback_models_stub")
-
-    @dataclass
-    class Evidence:
-        """证据存根。"""
-
-        id: str = ""
-        location: str = ""
-        content: str = ""
-        description: str = ""
-        source: str = "静态"
-
-        def to_dict(self) -> Dict[str, Any]:
-            """序列化为可 JSON 化的 dict。"""
-            from dataclasses import asdict
-            return asdict(self)
-
-    @dataclass
-    class FindingReport:
-        """漏洞发现存根。"""
-
-        id: str = ""
-        title: str = ""
-        severity: str = "MEDIUM"
-        cwe_id: str = ""
-        owasp_masvs: str = ""
-        category: str = ""
-        description: str = ""
-        evidence: List[Evidence] = field(default_factory=list)
-        remediation: str = ""
-        references: List[str] = field(default_factory=list)
-        tool_version: str = ""
-        confidence: float = 0.5
-
-        def to_dict(self) -> Dict[str, Any]:
-            """序列化为可 JSON 化的 dict。"""
-            from dataclasses import asdict
-            return asdict(self)
-
-    mod.Evidence = Evidence
-    mod.FindingReport = FindingReport
-    return mod
-
-
-# 注入存根到 sys.modules
-_fallback = _build_fallback_models()
-sys.modules["fp_sentinel.mobile_reporting"] = types.ModuleType("fp_sentinel.mobile_reporting")
-sys.modules["fp_sentinel.mobile_reporting.models"] = types.ModuleType(
-    "fp_sentinel.mobile_reporting.models"
-)
-sys.modules["fp_sentinel.mobile_reporting.models.report_models"] = _fallback
-sys.modules["fp_sentinel.mobile_reporting.formats"] = types.ModuleType(
-    "fp_sentinel.mobile_reporting.formats"
-)
-sys.modules["fp_sentinel.mobile_reporting.formats.base_generator"] = types.ModuleType(
-    "fp_sentinel.mobile_reporting.formats.base_generator"
-)
-
-
-# ---------------------------------------------------------------------------
 # Fixture
 # ---------------------------------------------------------------------------
 
+# 注：不再在模块顶层替换 sys.modules。
+# 原 stub 注入是 mobile_reporting 模型未就绪时的临时兜底，
+# 现已有了正式的 report_models（含 VALID_SEVERITIES），
+# 继续在 conftest 中替换会导致全仓并发收集时污染其他模块的 import。
 
-@pytest.fixture
+
+@pytest.fixture 
 def sample_har(tmp_path: Path) -> Path:
     """构造一个临时 HAR 样本文件。
 

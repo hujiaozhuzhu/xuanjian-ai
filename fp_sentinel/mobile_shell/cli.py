@@ -112,12 +112,29 @@ def dump_ios(
     app: Optional[str] = typer.Option(None, "--app", help="IPA 路径"),
     package: Optional[str] = typer.Option(None, "--package", help="目标包名(需越狱设备)"),
     output: str = typer.Option("./reports/mobile_shell/", "--output", help="输出目录"),
+    mode: str = typer.Option("auto", "--mode", help="auto(动态优先)/static(仅提取)/detect(仅检测)"),
     device: Optional[str] = typer.Option(None, "--device", help="设备 UDID"),
 ) -> None:
-    """iOS 脱壳：frida-ios-dump（需越狱设备），降级检测模式。"""
+    """iOS 脱壳：frida-ios-dump（需越狱设备），降级检测模式。
+
+    ``--mode`` 三档：
+    - ``auto``: 优先 frida-ios-dump 动态脱壳，失败自动降级检测
+    - ``static``: 仅提取未加密二进制或复制 IPA，不尝试动态脱壳
+    - ``detect``: 仅 cryptid 加密检测，不产出解密二进制
+    """
     configure_logging()
     if not app and not package:
         typer.echo("错误: --app 与 --package 至少提供一个", err=True)
+        raise typer.Exit(code=2)
+    mode_lower = mode.lower()
+    if mode_lower in ("auto", "frida"):
+        dump_mode = DumpMode.FRIDA
+    elif mode_lower == "static":
+        dump_mode = DumpMode.STATIC
+    elif mode_lower == "detect":
+        dump_mode = DumpMode.DETECT
+    else:
+        typer.echo(f"错误: 未知 mode={mode}（可选 auto/static/detect）", err=True)
         raise typer.Exit(code=2)
     target = DumpTarget(
         path=app or package or "",
@@ -125,7 +142,7 @@ def dump_ios(
         device_id=device,
         platform_hint=Platform.IOS,
     )
-    config = DumpConfig(output_dir=output, mode=DumpMode.FRIDA)
+    config = DumpConfig(output_dir=output, mode=dump_mode)
     result = IOSDumper().dump(target, config)
     _echo_result(result)
     raise typer.Exit(code=0 if result.success else 1)
