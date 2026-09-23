@@ -2,6 +2,7 @@
 规则模块
 """
 
+from .rule_registry import RuleRegistry, get_registry
 from .java.rules import JAVA_FALSE_POSITIVE_RULES, JAVA_SECURITY_GUARD_PATTERNS
 
 # JS 规则（可选）
@@ -34,6 +35,8 @@ except ImportError:
     GO_FALSE_POSITIVE_RULES = []
 
 __all__ = [
+    "RuleRegistry",
+    "get_registry",
     "JAVA_FALSE_POSITIVE_RULES",
     "JAVA_SECURITY_GUARD_PATTERNS",
     "JS_SECURITY_RULES",
