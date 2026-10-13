@@ -42,3 +42,7 @@ __all__ = [
 
 if _DOM_VERIFY_AVAILABLE:
     __all__ += ["SafeJsExecutor", "VerifyBackend", "ExecutionResult", "MarkerHit"]
+
+from .verifier import available, self_check, module_version
+
+__all__ += ["available", "self_check", "module_version"]

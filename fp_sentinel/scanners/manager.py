@@ -7,7 +7,14 @@ v2.3.0: 新增 Go 语言自动识别与 GoScanner 注册；增强 JS/TS 扩展�
 
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+import time
+from copy import deepcopy
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional, Tuple
+from .base import (
+    ScannerParseError,
+    canonical_error_code,
+)
 from .semgrep_scanner import SemgrepScanner
 from .findsecbugs_scanner import FindSecBugsScanner
 from .bandit_scanner import BanditScanner
@@ -40,6 +47,7 @@ class ScannerManager:
             else raw_config
         )
         self.scanners = {}
+        self.last_execution = self._new_execution_state("idle", None, [], {})
         self._init_scanners()
 
     def _init_scanners(self):
@@ -114,33 +122,200 @@ class ScannerManager:
         if scanners is None:
             scanners = self._select_scanners(language)
 
-        # 并发执行扫描
-        tasks = []
-        for tool in scanners:
-            if tool in self.scanners:
-                scanner = self.scanners[tool]
-                tasks.append(scanner.scan(target_path, language=language, **kwargs))
+        selected_tools = list(scanners)
+        started_at = datetime.now(timezone.utc).isoformat()
+        started_monotonic = time.monotonic()
+        available_scanners: List[Tuple[ScanTool, Any]] = []
+        failures: List[Dict[str, Any]] = []
+        scanner_states: Dict[str, Dict[str, Any]] = {}
+        requested_names = [getattr(tool, "value", str(tool)) for tool in selected_tools]
+        available_names = [
+            getattr(tool, "value", str(tool)) for tool in self.scanners
+            if getattr(self.scanners[tool], "available", True) is not False
+        ]
 
-        if not tasks:
+        for tool in selected_tools:
+            scanner = self.scanners.get(tool)
+            tool_name = getattr(tool, "value", str(tool))
+            if scanner is None:
+                failure = self._failure(tool, "SCANNER_UNAVAILABLE", "Scanner is not registered")
+                failures.append(failure)
+                scanner_states[tool_name] = self._scanner_state("failed", "SCANNER_UNAVAILABLE", [failure])
+                continue
+            if getattr(scanner, "available", True) is False:
+                message = getattr(scanner, "unavailable_reason", None) or "Scanner tool is unavailable"
+                failure = self._failure(tool, "TOOL_MISSING", message)
+                failures.append(failure)
+                scanner_states[tool_name] = self._scanner_state("failed", "TOOL_MISSING", [failure])
+                continue
+            available_scanners.append((tool, scanner))
+
+        if not available_scanners:
+            if not failures:
+                failures.append(self._failure(None, "NO_SCANNER_AVAILABLE", "No scanners available for the target"))
+            self.last_execution = self._new_execution_state(
+                "no_scanners", "NO_SCANNER_AVAILABLE", failures, scanner_states,
+                requested_scanners=requested_names,
+                available_scanners=available_names,
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                duration_ms=round((time.monotonic() - started_monotonic) * 1000, 3),
+            )
             logger.warning("No scanners available for the target")
             return []
 
+        tasks = [scanner.scan(target_path, language=language, **kwargs) for _, scanner in available_scanners]
         results_lists = await asyncio.gather(*tasks, return_exceptions=True)
 
         # 聚合结果，去重
         all_results = []
         seen = set()
-        for results in results_lists:
+        for (tool, scanner), results in zip(available_scanners, results_lists):
+            state = deepcopy(getattr(scanner, "last_execution", {}))
+            state.pop("_started_monotonic", None)
             if isinstance(results, Exception):
+                code = getattr(results, "error_code", "SCANNER_EXCEPTION")
+                if isinstance(results, asyncio.TimeoutError):
+                    code = "TIMEOUT"
+                elif isinstance(results, ScannerParseError):
+                    code = "PARSE_ERROR"
+                failure = self._failure(tool, code, str(results) or results.__class__.__name__)
+                failures.append(failure)
+                scanner_states[getattr(tool, "value", str(tool))] = self._scanner_state("failed", code, [failure], state)
                 logger.error(f"Scanner failed: {results}")
                 continue
+
+            scanner_failures = state.get("failures") or []
+            scanner_status = state.get("status") or "completed"
+            scanner_error = state.get("error_code")
+            if scanner_failures or scanner_status in {"failed", "incomplete"} or scanner_error:
+                normalized_failures = [self._normalize_failure(tool, failure) for failure in scanner_failures]
+                if not normalized_failures:
+                    normalized_failures = [
+                        self._failure(tool, scanner_error or "SCANNER_FAILED", "Scanner reported failure")
+                    ]
+                failures.extend(normalized_failures)
+                scanner_states[getattr(tool, "value", str(tool))] = self._scanner_state(
+                    scanner_status if scanner_status in {"failed", "incomplete"} else "failed",
+                    scanner_error or normalized_failures[0]["error_code"],
+                    normalized_failures,
+                    state,
+                )
+                continue
+
+            scanner_states[getattr(tool, "value", str(tool))] = self._scanner_state(
+                "completed", None, [], state
+            )
             for r in results:
                 key = self._result_dedup_key(r)
                 if key not in seen:
                     seen.add(key)
                     all_results.append(r)
 
+        executed_names = [
+            getattr(tool, "value", str(tool)) for tool, _ in available_scanners
+        ]
+        if failures:
+            status = "failed" if not all_results else "partial"
+            self.last_execution = self._new_execution_state(
+                status, failures[0]["error_code"], failures, scanner_states,
+                requested_scanners=requested_names,
+                available_scanners=available_names,
+                executed_scanners=executed_names,
+                result_count=len(all_results),
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                duration_ms=round((time.monotonic() - started_monotonic) * 1000, 3),
+                legacy_status="incomplete" if status == "partial" else None,
+            )
+        else:
+            self.last_execution = self._new_execution_state(
+                "completed", None, [], scanner_states,
+                requested_scanners=requested_names,
+                available_scanners=available_names,
+                executed_scanners=executed_names,
+                result_count=len(all_results),
+                started_at=started_at,
+                completed_at=datetime.now(timezone.utc).isoformat(),
+                duration_ms=round((time.monotonic() - started_monotonic) * 1000, 3),
+            )
+
         return all_results
+
+    @staticmethod
+    def _failure(tool: Optional[ScanTool], error_code: str, message: str) -> Dict[str, Any]:
+        failure: Dict[str, Any] = {
+            "error_code": error_code,
+            "canonical_error_code": canonical_error_code(error_code),
+            "message": message,
+        }
+        if tool is not None:
+            failure["scanner"] = getattr(tool, "value", str(tool))
+        return failure
+
+    @staticmethod
+    def _normalize_failure(tool: ScanTool, failure: Dict[str, Any]) -> Dict[str, Any]:
+        normalized = dict(failure)
+        normalized.setdefault("scanner", getattr(tool, "value", str(tool)))
+        normalized.setdefault("error_code", "SCANNER_FAILED")
+        normalized.setdefault(
+            "canonical_error_code", canonical_error_code(normalized["error_code"])
+        )
+        normalized.setdefault("message", "Scanner failed")
+        return normalized
+
+    @staticmethod
+    def _scanner_state(
+        status: str,
+        error_code: Optional[str],
+        failures: List[Dict[str, Any]],
+        details: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        state = dict(details or {})
+        state.update({
+            "status": status,
+            "error_code": error_code,
+            "canonical_error_code": canonical_error_code(error_code),
+            "failures": failures,
+            "errors": failures,
+        })
+        return state
+
+    @staticmethod
+    def _new_execution_state(
+        status: str,
+        error_code: Optional[str],
+        failures: List[Dict[str, Any]],
+        scanner_states: Dict[str, Dict[str, Any]],
+        *,
+        requested_scanners: Optional[List[str]] = None,
+        available_scanners: Optional[List[str]] = None,
+        executed_scanners: Optional[List[str]] = None,
+        result_count: int = 0,
+        started_at: Optional[str] = None,
+        completed_at: Optional[str] = None,
+        duration_ms: Optional[float] = None,
+        legacy_status: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """创建 JSON 可序列化的执行状态并兼容旧字段。"""
+        state = {
+            "status": status,
+            "error_code": error_code,
+            "canonical_error_code": canonical_error_code(error_code),
+            "failures": failures,
+            "errors": failures,
+            "scanner_states": scanner_states,
+            "requested_scanners": requested_scanners or [],
+            "available_scanners": available_scanners or [],
+            "executed_scanners": executed_scanners or [],
+            "result_count": result_count,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "duration_ms": duration_ms,
+        }
+        if legacy_status is not None:
+            state["legacy_status"] = legacy_status
+        return state
 
     @staticmethod
     def _result_dedup_key(result: ScanResult) -> str:

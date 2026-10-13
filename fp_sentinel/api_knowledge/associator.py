@@ -335,3 +335,34 @@ class ApiAssociator:
 
         lines.append("")
         return "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module interface contract (v5.0) — appended, original code untouched above
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def available() -> bool:
+    """Check if ApiKnowledgeStore is importable from the sibling store module."""
+    try:
+        from .store import ApiKnowledgeStore  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def self_check() -> tuple[bool, str]:
+    """Run basic self-test and return (ok, message)."""
+    try:
+        from .store import ApiKnowledgeStore
+        store = ApiKnowledgeStore(":memory:")
+        store.open()
+        store.close()
+        return (True, "ok")
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def module_version() -> str:
+    """Return the semantic version string of this module."""
+    return "5.0.0"

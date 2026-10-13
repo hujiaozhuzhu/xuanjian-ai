@@ -380,3 +380,33 @@ class ApiKnowledgeStore:
             "by_method": by_method,
             "by_sensitivity": by_sensitivity,
         }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module interface contract (v5.0) — appended, original code untouched above
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def available() -> bool:
+    """Check if sqlite3 is importable as the storage backend."""
+    try:
+        import sqlite3  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def self_check() -> tuple[bool, str]:
+    """Run basic self-test and return (ok, message)."""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(":memory:")
+        conn.close()
+        return (True, "ok")
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def module_version() -> str:
+    """Return the semantic version string of this module."""
+    return "5.0.0"

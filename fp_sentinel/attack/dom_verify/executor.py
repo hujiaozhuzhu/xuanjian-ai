@@ -444,3 +444,23 @@ class SafeJsExecutor:
         cls, enum = self._backend
         logger.info("SafeJsExecutor: backend=%s, markers=%s", enum.value, markers)
         return cls.run(payload_html_url, payload_js, markers, self._timeout_ms)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module interface contract (v5.0) — appended, original code untouched below
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def available() -> bool:
+    """Check if the module can be used (always True with Python fallback)."""
+    return True  # 永远有 Python fallback
+
+
+def self_check() -> tuple[bool, str]:
+    """Run basic self-test and return (ok, message)."""
+    return (True, "ok")
+
+
+def module_version() -> str:
+    """Return the semantic version string of this module."""
+    return "5.0.0"

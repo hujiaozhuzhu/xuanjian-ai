@@ -479,3 +479,33 @@ class ApiDiscovery:
         result = discovery._dedup_add(batch)
         logger.info("文本端点提取完成: 共 %d 个唯一端点", len(result))
         return result
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module interface contract (v5.0) — appended, original code untouched above
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def available() -> bool:
+    """Check if ApiDiscovery class can be instantiated."""
+    try:
+        ApiDiscovery()
+        return True
+    except Exception:
+        return False
+
+
+def self_check() -> tuple[bool, str]:
+    """Run basic self-test and return (ok, message)."""
+    try:
+        disc = ApiDiscovery()
+        result = disc.from_text("https://example.com/api/v1/users")
+        ok = len(result) > 0
+        return (ok, "ok" if ok else "text extraction returned no endpoints")
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def module_version() -> str:
+    """Return the semantic version string of this module."""
+    return "5.0.0"

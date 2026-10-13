@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
+from .base import ScannerParseError
 from ..models import ScanResult, ScanTool, Severity
 
 
@@ -125,8 +126,11 @@ class SemgrepScanner(BaseScanner):
         Returns:
             List[ScanResult]: 扫描结果
         """
+        self._execution_started()
         if not self.available:
-            logger.warning(self.unavailable_reason)
+            message = self.unavailable_reason or "Semgrep is not installed"
+            self._execution_failed("TOOL_MISSING", message)
+            logger.warning(message)
             return []
 
         cmd = self._build_command(
@@ -144,20 +148,32 @@ class SemgrepScanner(BaseScanner):
             )
 
             if proc.returncode not in (0, 1):
-                logger.warning(f"Semgrep exited with code {proc.returncode}: {stderr.decode()}")
+                message = stderr.decode(errors="replace") or f"Semgrep exited with code {proc.returncode}"
+                self._execution_failed("NON_ZERO_EXIT", message)
+                logger.warning(message)
                 return []
 
-            return self._parse_output(stdout.decode())
+            try:
+                results = self._parse_output(stdout.decode(errors="replace"))
+            except ScannerParseError as exc:
+                self._execution_failed(exc.error_code, str(exc))
+                return []
+            self._execution_completed(len(results))
+            return results
 
         except FileNotFoundError:
             self.available = False
             self.unavailable_reason = "Semgrep 未安装；高级规则未启用。安装命令: pip install fp-sentinel[scanners]"
+            self._execution_failed("TOOL_MISSING", self.unavailable_reason)
             logger.warning(self.unavailable_reason)
             return []
         except asyncio.TimeoutError:
-            logger.error(f"Semgrep scan timed out after {self.timeout}s")
+            message = f"Semgrep scan timed out after {self.timeout}s"
+            self._execution_failed("TIMEOUT", message)
+            logger.error(message)
             return []
         except Exception as e:
+            self._execution_failed("SCANNER_EXCEPTION", str(e))
             logger.error(f"Semgrep scan failed: {e}")
             return []
 
@@ -267,9 +283,9 @@ class SemgrepScanner(BaseScanner):
 
         try:
             data = json.loads(output)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             logger.error("Failed to parse Semgrep JSON output")
-            return []
+            raise ScannerParseError("Failed to parse Semgrep JSON output") from exc
 
         for item in data.get("results", []):
             try:

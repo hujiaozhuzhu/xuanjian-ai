@@ -11,10 +11,22 @@ Five pipelines:
 from .store import ApiKnowledgeStore, EndpointNode
 from .schema_infer import SchemaInferer
 from .associator import ApiAssociator
+from .store import available as store_available
+from .store import self_check as store_self_check
+from .store import module_version as store_module_version
+from .associator import available as associator_available
+from .associator import self_check as associator_self_check
+from .associator import module_version as associator_module_version
 
 __all__ = [
     "ApiKnowledgeStore",
     "EndpointNode",
     "SchemaInferer",
     "ApiAssociator",
+    "store_available",
+    "store_self_check",
+    "store_module_version",
+    "associator_available",
+    "associator_self_check",
+    "associator_module_version",
 ]

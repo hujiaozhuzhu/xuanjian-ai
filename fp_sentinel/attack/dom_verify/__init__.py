@@ -15,10 +15,14 @@ from .executor import (
     MarkerHit,
     VerifyBackend,
 )
+from .executor import available, self_check, module_version
 
 __all__ = [
     "SafeJsExecutor",
     "ExecutionResult",
     "MarkerHit",
     "VerifyBackend",
+    "available",
+    "self_check",
+    "module_version",
 ]

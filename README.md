@@ -9,7 +9,26 @@
 
 # 玄鉴 XuanJian AI v3.1
 
+## v5.0（本版本 — 2026-09-23）
+
+本版本落地 agent-facing skill 包：规则与代码分离，模块接口契约化。
+规则文件路径：`$HOME/.meituan-catpaw/4275287949/skills/fp_sentinel/`
+模块接口契约：5 个核心模块均含 `available()` / `self_check()` / `module_version()`。
+CLI 接入红线闸门：未授权 IP 拦截，写操作须双标志。
+CHANGELOG：`CHANGELOG_v5.md`。启动命令：`fp-sentinel --help`。
+
 > **鉴伪存真，洞察代码风险** — 面向安全研究团队的 AI 驱动代码安全审计与红蓝对抗平台
+
+## Agent 快速接入
+
+```bash
+export FP_TARGET_WHITELIST="10.0.0.0/8,192.168.1.0/24"   # 设置授权目标 IP 白名单
+fp-sentinel scan /path/to/project --format table         # 执行只读扫描
+fp-sentinel scan /path --lang auto --report compliance   # 自动语言检测并生成合规报告
+fp-sentinel setup --audit --scan-dir .                   # 审计扫描器依赖状态
+fp-sentinel setup --install                              # 安装扫描器（需授权确认）
+fp-sentinel stats                                        # 查看扫描统计概览
+```
 
 > v3.1 融合 AI 自主渗透测试、自动化修复 PR、DevSecOps 流水线集成、行业基准对标、隐私计算协同审计五大新模块，全版本号统一。不会执行、解密、动态解包或修改被扫描文件。
 
@@ -426,6 +445,18 @@ fp-sentinel web serve --port 8080
 ## License
 
 [MIT License](LICENSE) — 自由使用，自由修改，自由分发。
+
+---
+
+## v5.0 规则文件
+
+v5.0 起，玄鉴将规则从代码中抽离，独立存放于：
+
+```
+~/.meituan-catpaw/4275287949/skills/fp_sentinel/
+```
+
+该目录下 `rules/` 包含 7 条 YAML/MD 规则：路由决策表、范围边界、只读默认、报告格式、级别协定、存储保留、文档风格。CLI 每次执行时由 `RuleRegistry` 加载，闸门校验失败即 fail-closed。
 
 ---
 

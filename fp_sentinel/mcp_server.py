@@ -21,9 +21,13 @@ MCP 服务器（FastMCP 装饰器模式）
 """
 
 import asyncio
+import binascii
+import base64
+import hashlib
 import json
 import logging
-from typing import List, Optional, Dict, Any
+import math
+from typing import List, Optional, Dict, Any, Tuple
 
 from mcp.server.fastmcp import FastMCP
 
@@ -37,6 +41,94 @@ from .scanners.manager import ScannerManager
 
 
 logger = logging.getLogger(__name__)
+
+
+# MCP result metadata is deliberately kept local to this module.  The tools
+# return JSON strings for compatibility with existing MCP clients, while the
+# metadata makes pagination and integrity checks deterministic for new clients.
+_CURSOR_ERROR = "INVALID_CURSOR"
+_NOT_FOUND_ERROR = "SCAN_NOT_FOUND"
+_INVALID_LIMIT_ERROR = "INVALID_LIMIT"
+_INVALID_FORMAT_ERROR = "INVALID_FORMAT"
+_SCAN_EXCEPTION_ERROR = "SCAN_EXCEPTION"
+
+
+def _canonical_json(value: Any) -> str:
+    """Serialize a value deterministically for hashes and cursor payloads."""
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    )
+
+
+def _content_sha256(value: Any) -> str:
+    """Return the SHA-256 digest of deterministic JSON content."""
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _text_sha256(value: str) -> str:
+    """Return the SHA-256 digest of an encoded report payload."""
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _decode_cursor(cursor: Optional[str]) -> int:
+    """Decode a deterministic offset cursor.
+
+    Decimal cursors are intentionally accepted for old/simple clients.  The
+    base64 JSON form is also accepted so future callers can bind a cursor to a
+    query without changing the public parameter.
+    """
+    if cursor in (None, ""):
+        return 0
+    value = str(cursor).strip()
+    if value.isdigit():
+        return int(value)
+    try:
+        padded = value + "=" * (-len(value) % 4)
+        decoded = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        payload = json.loads(decoded)
+        offset = payload.get("offset") if isinstance(payload, dict) else None
+        if isinstance(offset, int) and offset >= 0:
+            return offset
+    except (ValueError, TypeError, UnicodeDecodeError, json.JSONDecodeError,
+            binascii.Error):
+        pass
+    raise ValueError(_CURSOR_ERROR)
+
+
+def _normalise_limit(limit: Any) -> int:
+    """Validate the page size without changing the historical default."""
+    if isinstance(limit, bool):
+        raise ValueError(_INVALID_LIMIT_ERROR)
+    try:
+        value = int(limit)
+    except (TypeError, ValueError):
+        raise ValueError(_INVALID_LIMIT_ERROR) from None
+    if value < 1 or value > 1000:
+        raise ValueError(_INVALID_LIMIT_ERROR)
+    return value
+
+
+def _execution_state(manager: Any) -> Dict[str, Any]:
+    """Read ScannerManager runtime state defensively.
+
+    ScannerManager is intentionally not imported/modified here.  Supporting a
+    mapping and a small object-shaped state keeps this module compatible with
+    older managers and test doubles.
+    """
+    raw = getattr(manager, "last_execution", None)
+    if isinstance(raw, dict):
+        return dict(raw)
+    if raw is None:
+        return {}
+    state: Dict[str, Any] = {}
+    for key in ("status", "error_code", "errors", "failures"):
+        if hasattr(raw, key):
+            state[key] = getattr(raw, key)
+    return state
 
 
 # ─────────────────────── MCP 服务器封装 ───────────────────────
@@ -123,13 +215,38 @@ class MCPAuditServer:
                 "project_path": project_path,
                 "language": language,
                 "status": "running",
+                "error_code": None,
                 "started_at": datetime.now(timezone.utc).isoformat(),
+                "findings": [],
             }
 
             try:
                 raw = await server.scanner_manager.scan(
                     project_path, language=language, scanners=scan_tools
                 )
+                execution = _execution_state(server.scanner_manager)
+                execution_status = str(execution.get("status") or "completed").lower()
+                # Only an explicit completed state may become completed.  This
+                # prevents a partial scanner run from being reported as valid.
+                if execution_status == "partial":
+                    execution_status = "incomplete"
+                if execution_status == "no_scanners":
+                    execution_status = "failed"
+                if execution_status not in {"completed", "failed", "incomplete", "running"}:
+                    execution_status = "incomplete"
+
+                error_code = execution.get("error_code")
+                failures = execution.get("failures") or execution.get("errors") or []
+                if not error_code and isinstance(failures, list) and failures:
+                    first_failure = failures[0]
+                    if isinstance(first_failure, dict):
+                        error_code = first_failure.get("error_code") or first_failure.get("code")
+                if not error_code and execution_status == "failed":
+                    error_code = "SCAN_FAILED"
+                elif not error_code and execution_status == "incomplete":
+                    error_code = "SCAN_INCOMPLETE"
+                if execution_status != "completed" and error_code is None:
+                    error_code = "SCAN_INCOMPLETE"
 
                 filtered: List[FilterResult] = []
                 for i, sr in enumerate(raw):
@@ -141,25 +258,44 @@ class MCPAuditServer:
 
                 stats = server._calculate_statistics(filtered)
                 elapsed = time.monotonic() - start
-
-                server._scans[scan_id].update({
-                    "status": "completed",
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                scan_update = {
+                    "status": execution_status,
+                    "error_code": error_code,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
                     "findings": [fr.id for fr in filtered],
                     "stats": stats.model_dump(),
-                })
+                    "execution": execution,
+                }
+                if execution_status == "completed":
+                    scan_update["completed_at"] = scan_update["finished_at"]
+                server._scans[scan_id].update(scan_update)
 
                 return json.dumps({
                     "scan_id": scan_id,
                     "total_findings": len(raw),
                     "statistics": stats.model_dump(),
                     "duration_seconds": round(elapsed, 2),
-                }, ensure_ascii=False, indent=2)
+                    "status": execution_status,
+                    "error_code": error_code,
+                }, ensure_ascii=False, indent=2, default=str)
 
             except Exception as e:
-                server._scans[scan_id]["status"] = "failed"
+                execution = _execution_state(server.scanner_manager)
+                error_code = execution.get("error_code") or _SCAN_EXCEPTION_ERROR
+                server._scans[scan_id].update({
+                    "status": "failed",
+                    "error_code": error_code,
+                    "finished_at": datetime.now(timezone.utc).isoformat(),
+                    "execution": execution,
+                    "error": str(e),
+                })
                 server.logger.error(f"扫描失败: {e}")
-                return json.dumps({"error": str(e), "scan_id": scan_id}, ensure_ascii=False)
+                return json.dumps({
+                    "error": str(e),
+                    "scan_id": scan_id,
+                    "status": "failed",
+                    "error_code": error_code,
+                }, ensure_ascii=False, default=str)
 
         # ── 2. triage_findings ──
         @self.mcp.tool()
@@ -297,6 +433,8 @@ class MCPAuditServer:
             scan_id: str,
             verdict: Optional[str] = None,
             severity: Optional[str] = None,
+            limit: int = 100,
+            cursor: Optional[str] = None,
         ) -> str:
             """
             列出扫描发现。
@@ -305,36 +443,43 @@ class MCPAuditServer:
                 scan_id: 扫描 ID
                 verdict: 过滤判定 (false_positive/true_positive/needs_review/likely_false_positive)
                 severity: 过滤严重程度 (CRITICAL/HIGH/MEDIUM/LOW/INFO)
+                limit: 每页数量，默认 100
+                cursor: 下一页游标，首次调用留空
 
             Returns:
-                JSON 格式的发现列表
+                JSON 格式的发现列表和分页完整性元数据
             """
             scan = server._scans.get(scan_id)
             if not scan:
-                return json.dumps({"error": f"扫描 {scan_id} 不存在"}, ensure_ascii=False)
+                return json.dumps(server._error_envelope(
+                    scan_id, _NOT_FOUND_ERROR, f"扫描 {scan_id} 不存在"
+                ), ensure_ascii=False)
 
-            findings = []
-            for fid in scan.get("findings", []):
-                fr = server._findings.get(fid)
-                if fr is None:
-                    continue
-                if verdict and fr.verdict.value != verdict:
-                    continue
-                if severity and fr.original.severity.value != severity:
-                    continue
-                findings.append(fr.model_dump())
+            try:
+                page, meta = server._page_findings(scan, verdict, severity, limit, cursor)
+            except ValueError as exc:
+                code = str(exc) or _CURSOR_ERROR
+                return json.dumps(server._error_envelope(scan_id, code, code), ensure_ascii=False)
 
-            return json.dumps({
+            body = {
                 "scan_id": scan_id,
-                "total": len(findings),
-                "findings": findings,
-            }, ensure_ascii=False, indent=2, default=str)
+                "total": meta["total"],
+                "findings": [f.model_dump() for f in page],
+            }
+            return json.dumps(server._envelope(
+                scan=scan,
+                payload=body,
+                content_for_hash=body,
+                pagination=meta,
+            ), ensure_ascii=False, indent=2, default=str)
 
         # ── 6. export_report ──
         @self.mcp.tool()
         async def export_report(
             scan_id: str,
             format: str = "json",
+            limit: int = 100,
+            cursor: Optional[str] = None,
         ) -> str:
             """
             导出扫描报告。
@@ -342,59 +487,57 @@ class MCPAuditServer:
             Args:
                 scan_id: 扫描 ID
                 format: 报告格式 (json/markdown)
+                limit: 每页数量，默认 100
+                cursor: 下一页游标，首次调用留空
 
             Returns:
-                报告内容字符串
+                JSON envelope；content 字段承载 JSON 对象或 Markdown 字符串
             """
             scan = server._scans.get(scan_id)
             if not scan:
-                return json.dumps({"error": f"扫描 {scan_id} 不存在"}, ensure_ascii=False)
+                return json.dumps(server._error_envelope(
+                    scan_id, _NOT_FOUND_ERROR, f"扫描 {scan_id} 不存在"
+                ), ensure_ascii=False)
 
-            findings = [
+            report_format = (format or "json").lower()
+            if report_format in {"md", "markdown"}:
+                report_format = "markdown"
+            if report_format != "json" and report_format != "markdown":
+                return json.dumps(server._error_envelope(
+                    scan_id, _INVALID_FORMAT_ERROR, f"不支持的报告格式: {format}"
+                ), ensure_ascii=False)
+
+            try:
+                page, meta = server._page_findings(scan, None, None, limit, cursor)
+            except ValueError as exc:
+                code = str(exc) or _CURSOR_ERROR
+                return json.dumps(server._error_envelope(scan_id, code, code), ensure_ascii=False)
+
+            stats = server._calculate_statistics([
                 server._findings[fid]
                 for fid in scan.get("findings", [])
                 if fid in server._findings
-            ]
-            stats = server._calculate_statistics(findings)
+            ])
+            report = server._report_payload(scan, page, stats)
 
-            report = {
+            if report_format == "json":
+                content: Any = report
+                hash_source = report
+            else:
+                content = server._report_markdown(scan, page, stats)
+                hash_source = content
+
+            body = {
                 "scan_id": scan_id,
-                "project_path": scan.get("project_path"),
-                "language": scan.get("language"),
-                "completed_at": scan.get("completed_at"),
-                "statistics": stats.model_dump(),
-                "findings_count": len(findings),
+                "format": report_format,
+                "content": content,
             }
-
-            if format == "json":
-                report["findings"] = [f.model_dump() for f in findings]
-                return json.dumps(report, ensure_ascii=False, indent=2, default=str)
-
-            # markdown
-            lines = [
-                "# 玄鉴扫描报告", "",
-                f"- **扫描ID**: `{scan_id}`",
-                f"- **项目**: {scan.get('project_path')}",
-                f"- **语言**: {scan.get('language')}",
-                f"- **时间**: {scan.get('completed_at')}", "",
-                "## 统计", "",
-                "| 指标 | 数值 |", "|------|------|",
-                f"| 总发现 | {stats.total} |",
-                f"| 误报 | {stats.false_positives} |",
-                f"| 疑似误报 | {stats.likely_false_positives} |",
-                f"| 真实问题 | {stats.true_positives} |",
-                f"| 待复核 | {stats.needs_review} |",
-                f"| 减少率 | {stats.reduction_rate} |", "",
-                "## 发现详情", "",
-            ]
-            for f in findings:
-                o = f.original
-                lines.append(f"### [{o.severity.value}] {o.rule_id}")
-                lines.append(f"- 文件: `{o.file}:{o.line}`")
-                lines.append(f"- 判定: {f.verdict.value} ({f.confidence:.0%})")
-                lines.append(f"- 建议: {f.recommendation}")
-                lines.append("")
-            return "\n".join(lines)
+            return json.dumps(server._envelope(
+                scan=scan,
+                payload=body,
+                content_for_hash=hash_source,
+                pagination=meta,
+            ), ensure_ascii=False, indent=2, default=str)
 
         # ── 7. get_statistics ──
         @self.mcp.tool()
@@ -719,6 +862,146 @@ class MCPAuditServer:
                 return json.dumps({"status": "closed", "session_id": session_id}, ensure_ascii=False)
             except Exception as e:
                 return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+    # ─────── 分页 / 报告辅助 ───────
+
+    def _error_envelope(self, scan_id: str, error_code: str, message: str) -> Dict[str, Any]:
+        """Return a stable error envelope for MCP JSON-string tools."""
+        return {
+            "scan_id": scan_id,
+            "status": "failed",
+            "error_code": error_code,
+            "message": message,
+            "total": 0,
+            "next_cursor": None,
+            "part_index": 1,
+            "part_total": 1,
+            "content_sha256": _content_sha256({"error_code": error_code, "message": message}),
+            "content": None,
+            "findings": [],
+            "pagination": {
+                "total": 0,
+                "next_cursor": None,
+                "part_index": 1,
+                "part_total": 1,
+            },
+        }
+
+    def _envelope(
+        self,
+        scan: Dict[str, Any],
+        payload: Dict[str, Any],
+        content_for_hash: Any,
+        pagination: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Merge legacy payload fields with the new deterministic envelope."""
+        envelope = dict(payload)
+        envelope.update({
+            "status": scan.get("status", "completed"),
+            "error_code": scan.get("error_code"),
+            "total": pagination["total"],
+            "next_cursor": pagination["next_cursor"],
+            "part_index": pagination["part_index"],
+            "part_total": pagination["part_total"],
+            "pagination": dict(pagination),
+            "content_sha256": (
+                _text_sha256(content_for_hash)
+                if isinstance(content_for_hash, str)
+                else _content_sha256(content_for_hash)
+            ),
+        })
+        return envelope
+
+    def _page_findings(
+        self,
+        scan: Dict[str, Any],
+        verdict: Optional[str],
+        severity: Optional[str],
+        limit: Any,
+        cursor: Optional[str],
+    ) -> Tuple[List[FilterResult], Dict[str, Any]]:
+        """Return a deterministic page in scan.findings order."""
+        page_size = _normalise_limit(limit)
+        offset = _decode_cursor(cursor)
+        ordered: List[FilterResult] = []
+        for fid in scan.get("findings", []):
+            fr = self._findings.get(fid)
+            if fr is None:
+                continue
+            if verdict and fr.verdict.value != verdict:
+                continue
+            if severity and fr.original.severity.value != severity:
+                continue
+            ordered.append(fr)
+
+        total = len(ordered)
+        if offset > total:
+            raise ValueError(_CURSOR_ERROR)
+        end = min(offset + page_size, total)
+        next_cursor = str(end) if end < total else None
+        part_total = max(1, math.ceil(total / page_size))
+        part_index = min((offset // page_size) + 1, part_total)
+        return ordered[offset:end], {
+            "total": total,
+            "next_cursor": next_cursor,
+            "part_index": part_index,
+            "part_total": part_total,
+        }
+
+    def _report_payload(
+        self,
+        scan: Dict[str, Any],
+        findings: List[FilterResult],
+        stats: FilterStatistics,
+    ) -> Dict[str, Any]:
+        """Build the JSON report content while keeping historical keys."""
+        findings_count = len(findings)
+        return {
+            "scan_id": scan.get("id"),
+            "project_path": scan.get("project_path"),
+            "language": scan.get("language"),
+            "completed_at": scan.get("completed_at"),
+            "status": scan.get("status", "completed"),
+            "error_code": scan.get("error_code"),
+            "statistics": stats.model_dump(),
+            "findings_count": findings_count,
+            "total": findings_count,
+            "findings": [f.model_dump() for f in findings],
+        }
+
+    def _report_markdown(
+        self,
+        scan: Dict[str, Any],
+        findings: List[FilterResult],
+        stats: FilterStatistics,
+    ) -> str:
+        """Render a Markdown report page."""
+        lines = [
+            "# 玄鉴扫描报告", "",
+            f"- **扫描ID**: `{scan.get('id')}`",
+            f"- **项目**: {scan.get('project_path')}",
+            f"- **语言**: {scan.get('language')}",
+            f"- **时间**: {scan.get('completed_at')}",
+            f"- **状态**: {scan.get('status', 'completed')}",
+            "",
+            "## 统计", "",
+            "| 指标 | 数值 |", "|------|------|",
+            f"| 总发现 | {stats.total} |",
+            f"| 误报 | {stats.false_positives} |",
+            f"| 疑似误报 | {stats.likely_false_positives} |",
+            f"| 真实问题 | {stats.true_positives} |",
+            f"| 待复核 | {stats.needs_review} |",
+            f"| 减少率 | {stats.reduction_rate} |", "",
+            "## 发现详情", "",
+        ]
+        for finding in findings:
+            original = finding.original
+            lines.append(f"### [{original.severity.value}] {original.rule_id}")
+            lines.append(f"- 文件: `{original.file}:{original.line}`")
+            lines.append(f"- 判定: {finding.verdict.value} ({finding.confidence:.0%})")
+            lines.append(f"- 建议: {finding.recommendation}")
+            lines.append("")
+        return "\n".join(lines)
 
     # ─────── 过滤流水线 ───────
 

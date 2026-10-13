@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 from .endpoints_models import ApiEndpoint, FindingReport
+from .api_discovery import available, self_check, module_version
 
 __version__ = "1.0.0"
-__all__ = ["ApiEndpoint", "FindingReport"]
+__all__ = ["ApiEndpoint", "FindingReport", "available", "self_check", "module_version"]

@@ -20,9 +20,11 @@ from rich import box
 
 from .. import __version__
 from ..config import load_config, expand_db_path
+from ..rules.rule_registry import get_registry
 from ..models import ScanTool, Finding
 from ..scanners import ScannerManager, ResultNormalizer
 from ..database import get_database, ProjectRepo, FindingRepo, FPMarkRepo, ScanHistoryRepo
+from ..execution import preflight
 from .terminal import create_console
 
 
@@ -294,6 +296,25 @@ def _root_callback(
     ),
 ):
     """玄鉴 (xuanjian-ai) — 代码审计误报排查 MCP 工具"""
+    # 全局白名单校验：环境变量 FP_TARGET_WHITELIST 控制可访问的 target IP
+    _whitelist_env = os.environ.get("FP_TARGET_WHITELIST", "")
+    if _whitelist_env and _whitelist_env != "*":
+        _whitelist = [w.strip() for w in _whitelist_env.split(",") if w.strip()]
+        _registry_global = get_registry()
+        # 从 sys.argv 中检测可能未知 target IP（取非选项参数中符合 IP 形态的字符串）
+        import re as _re
+        _ip_pattern = _re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
+        for _arg in sys.argv[1:]:
+            _matches = _ip_pattern.findall(_arg)
+            for _ip in _matches:
+                if not _registry_global.check_scope(_ip, _whitelist):
+                    _audit_path = Path.home() / ".fp_sentinel" / "audit_failure.log"
+                    _audit_path.parent.mkdir(parents=True, exist_ok=True)
+                    _audit_path.write_text(
+                        f"SCOPE_VIOLATION: target_ip={_ip} whitelist={_whitelist}\n",
+                        encoding="utf-8",
+                    )
+                    sys.exit(2)
 
 
 # ─────────────────────── 辅助 ───────────────────────
@@ -328,6 +349,9 @@ def scan(
     results_file: Optional[str] = typer.Option(
         None, "--results-file", help="JSON 或 SARIF 结构化结果文件路径"
     ),
+    manifest_file: Optional[str] = typer.Option(
+        None, "--manifest-file", help="执行清单 JSON 文件路径；未指定时仅输出摘要"
+    ),
     report: str = typer.Option(
         "compliance", "--report",
         help="生成报告类型 (compliance/attack/all/none)，默认 compliance 向后兼容",
@@ -356,6 +380,41 @@ def scan(
     async def _run():
         _setup_logging(verbose)
 
+        # 执行门禁必须先于配置加载和 ScannerManager 初始化；任何失败均 fail-closed。
+        execution_manifest = preflight(route="scan")
+        if execution_manifest["status"] != "passed":
+            # 失败清单也必须先落盘，供 CI/审计读取后再阻断扫描。
+            if manifest_file:
+                manifest_path = Path(manifest_file)
+                manifest_path.parent.mkdir(parents=True, exist_ok=True)
+                manifest_path.write_text(
+                    json.dumps(execution_manifest, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                console.print(f"[dim]失败执行清单已写入: {manifest_path}[/dim]")
+            console.print(
+                "[red]执行门禁失败 (fail_closed)：扫描未启动[/red]\n"
+                + "\n".join(f"  - {item}" for item in execution_manifest.get("limitations", []))
+            )
+            if output_format == "json":
+                console.print_json(json.dumps({"manifest": execution_manifest}, ensure_ascii=False))
+            raise typer.Exit(1)
+
+        # 成功门禁的 manifest 先落盘，再加载配置或初始化 ScannerManager。
+        # 这样即使后续扫描器初始化/配置失败，也保留了可校验的执行清单。
+        if manifest_file:
+            manifest_path = Path(manifest_file)
+            manifest_path.parent.mkdir(parents=True, exist_ok=True)
+            manifest_path.write_text(
+                json.dumps(execution_manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            console.print(f"[dim]执行清单已写入: {manifest_path}[/dim]")
+
+        # 规则闸门：加载全部规则（scan 只读，无需 write opt-in）
+        registry = get_registry()
+        registry.load()
+
         # 加载配置
         config = load_config(config_file)
 
@@ -381,7 +440,7 @@ def scan(
 
         console.print(f"\n[bold]🔍 正在扫描: {project_path}[/bold]")
         console.print(f"   语言: {language}  可用扫描器: {manager.get_available_scanners()}\n")
-
+        console.print(f"   执行清单: {execution_manifest['run_id']} ({execution_manifest['manifest_sha256'][:12]}…)\n")
         # 执行扫描
         start = time.time()
         scan_results = await manager.scan(
@@ -889,6 +948,14 @@ def setup_cmd(
         env_token_agreed,
         interactive_agreement,
     )
+
+    # 规则闸门：加载规则并对 --install 做 write opt-in 校验
+    _registry = get_registry()
+    _registry.load()
+    _has_auth = env_token_agreed() or interactive_agreement()
+    if install and not _registry.require_write_opt_in(True, install, _has_auth):
+        console.print("[red]未满足 write opt-in 条件，已中止。[/red]")
+        raise typer.Exit(1)
 
     installer = ScannerInstaller()
 

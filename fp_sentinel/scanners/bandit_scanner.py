@@ -9,6 +9,7 @@ import json
 import logging
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
+from .base import ScannerParseError
 from ..models import ScanResult, ScanTool, Severity
 
 
@@ -39,6 +40,7 @@ class BanditScanner(BaseScanner):
         **kwargs
     ) -> List[ScanResult]:
         """使用 Bandit 扫描 Python 代码"""
+        self._execution_started()
         cmd = ["bandit", "-f", "json", "-r"]
 
         if config_file:
@@ -60,14 +62,30 @@ class BanditScanner(BaseScanner):
                 proc.communicate(), timeout=self.timeout
             )
 
-            return self._parse_output(stdout.decode())
+            if proc.returncode not in (0, 1):
+                message = stderr.decode(errors="replace") or f"Bandit exited with code {proc.returncode}"
+                self._execution_failed("NON_ZERO_EXIT", message)
+                logger.error(message)
+                return []
+            try:
+                results = self._parse_output(stdout.decode(errors="replace"))
+            except ScannerParseError as exc:
+                self._execution_failed(exc.error_code, str(exc))
+                return []
+            self._execution_completed(len(results))
+            return results
         except FileNotFoundError:
-            logger.error("Bandit not found. Please install: pip install bandit")
+            message = "Bandit not found. Please install: pip install bandit"
+            self._execution_failed("TOOL_MISSING", message)
+            logger.error(message)
             return []
         except asyncio.TimeoutError:
-            logger.error(f"Bandit scan timed out after {self.timeout}s")
+            message = f"Bandit scan timed out after {self.timeout}s"
+            self._execution_failed("TIMEOUT", message)
+            logger.error(message)
             return []
         except Exception as e:
+            self._execution_failed("SCANNER_EXCEPTION", str(e))
             logger.error(f"Bandit scan failed: {e}")
             return []
 
@@ -76,9 +94,9 @@ class BanditScanner(BaseScanner):
         results = []
         try:
             data = json.loads(output)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
             logger.error("Failed to parse Bandit JSON output")
-            return []
+            raise ScannerParseError("Failed to parse Bandit JSON output") from exc
 
         for item in data.get("results", []):
             try:

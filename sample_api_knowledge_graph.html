@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Knowledge Graph</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; overflow: hidden; }
+#app { display: flex; height: 100vh; }
+#sidebar { width: 320px; background: #16213e; padding: 16px; overflow-y: auto; border-right: 1px solid #0f3460; flex-shrink: 0; }
+#sidebar h2 { margin-bottom: 12px; font-size: 16px; color: #e94560; }
+#sidebar input[type=search] { width: 100%; padding: 8px; border-radius: 4px; border: none; background: #0f3460; color: #eee; box-sizing: border-box; }
+.detail-row { margin: 8px 0; font-size: 13px; word-break: break-all; }
+.detail-label { color: #aaa; font-size: 11px; display: block; margin-bottom: 2px; }
+#canvas { flex: 1; position: relative; }
+svg { width: 100%; height: 100%; cursor: grab; }
+.link { stroke: #4a5568; stroke-opacity: 0.6; }
+.node circle { stroke: #fff; stroke-width: 1.5px; cursor: pointer; }
+.node text { fill: #ddd; font-size: 10px; pointer-events: none; }
+#status { position: absolute; bottom: 8px; left: 16px; font-size: 12px; color: #aaa; }
+#legend { position: absolute; top: 8px; right: 16px; background: rgba(22,33,62,0.9); padding: 8px 12px; border-radius: 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h2>API Knowledge Graph</h2>
+    <input type="search" id="search" placeholder="Search endpoint..." oninput="doSearch(this.value)">
+    <div id="detail">
+      <div class="detail-row"><span class="detail-label">Click a node to see details</span></div>
+    </div>
+  </div>
+  <div id="canvas">
+    <svg id="graph"></svg>
+    <div id="legend"><span style="display:inline-flex;align-items:center;margin-right:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#f44336;display:inline-block;margin-right:4px;"></span>DELETE</span><span style="display:inline-flex;align-items:center;margin-right:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#4caf50;display:inline-block;margin-right:4px;"></span>GET</span><span style="display:inline-flex;align-items:center;margin-right:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#9c27b0;display:inline-block;margin-right:4px;"></span>PATCH</span><span style="display:inline-flex;align-items:center;margin-right:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#2196f3;display:inline-block;margin-right:4px;"></span>POST</span><span style="display:inline-flex;align-items:center;margin-right:12px;"><span style="width:12px;height:12px;border-radius:50%;background:#ff9800;display:inline-block;margin-right:4px;"></span>PUT</span></div>
+    <div id="status">Loading...</div>
+  </div>
+</div>
+<script>
+const DATA = {"nodes": [{"id": "29c64c41d60cc66d", "url": "https://api.example.com/users/{id}", "method": "GET", "sensitivity": "medium", "source": "har", "tags": ["user"], "radius": 10, "color": "#4caf50"}, {"id": "36be6f5aadb6d1e8", "url": "https://api.example.com/users", "method": "POST", "sensitivity": "critical", "source": "har", "tags": ["user", "auth"], "radius": 10, "color": "#2196f3"}, {"id": "3686bd7ba17f5797", "url": "https://api.example.com/users/{id}/orders", "method": "GET", "sensitivity": "high", "source": "har", "tags": ["order", "user"], "radius": 10, "color": "#4caf50"}, {"id": "b5f6efb2c0f774e5", "url": "https://api.example.com/orders/{id}", "method": "DELETE", "sensitivity": "high", "source": "burp", "tags": ["order"], "radius": 10, "color": "#f44336"}, {"id": "147f3ab783d4e186", "url": "https://api.example.com/login", "method": "POST", "sensitivity": "critical", "source": "static", "tags": ["auth"], "radius": 10, "color": "#2196f3"}, {"id": "ed9b6421d62c6919", "url": "https://api.example.com/health", "method": "GET", "sensitivity": "low", "source": "text", "tags": ["infra"], "radius": 7, "color": "#4caf50"}, {"id": "29fce9e9c0a821f0", "url": "https://external.captcha.com/verify", "method": "POST", "sensitivity": "low", "source": "static", "tags": ["external"], "radius": 7, "color": "#2196f3"}], "links": [{"source": "29c64c41d60cc66d", "target": "3686bd7ba17f5797", "weight": 0.35, "reason": "auto-linked"}, {"source": "29c64c41d60cc66d", "target": "b5f6efb2c0f774e5", "weight": 0.3, "reason": "auto-linked"}, {"source": "36be6f5aadb6d1e8", "target": "3686bd7ba17f5797", "weight": 0.23833333333333334, "reason": "auto-linked"}, {"source": "36be6f5aadb6d1e8", "target": "b5f6efb2c0f774e5", "weight": 0.175, "reason": "auto-linked"}, {"source": "36be6f5aadb6d1e8", "target": "147f3ab783d4e186", "weight": 0.13, "reason": "auto-linked"}, {"source": "3686bd7ba17f5797", "target": "b5f6efb2c0f774e5", "weight": 0.43, "reason": "auto-linked"}]};
+
+const svg = d3.select("#graph");
+const container = document.getElementById("canvas");
+const statusEl = document.getElementById("status");
+let width = container.clientWidth, height = container.clientHeight;
+
+svg.attr("viewBox", `0 0 ${width} ${height}`);
+
+const g = svg.append("g");
+
+// Zoom / pan
+const zoom = d3.zoom()
+  .scaleExtent([0.1, 8])
+  .on("zoom", (event) => g.attr("transform", event.transform));
+svg.call(zoom);
+
+// Build node/link maps
+const nodeMap = Object.fromEntries(DATA.nodes.map(n => [n.id, n]));
+const links = DATA.links.map(d => ({ source: d.source, target: d.target, weight: d.weight, reason: d.reason }));
+const nodes = DATA.nodes.map(d => ({...d, x: width/2 + (Math.random()-0.5)*300, y: height/2 + (Math.random()-0.5)*300}));
+
+// Force simulation
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(100))
+  .force("charge", d3.forceManyBody().strength(-200))
+  .force("center", d3.forceCenter(width / 2, height / 2))
+  .force("collision", d3.forceCollide().radius(d => d.radius + 5));
+
+// Render links
+const link = g.append("g")
+  .selectAll("line")
+  .data(links)
+  .join("line")
+  .attr("class", "link")
+  .attr("stroke-width", d => Math.max(1, (d.weight || 0.5) * 3));
+
+// Render nodes
+const node = g.append("g")
+  .selectAll("g")
+  .data(nodes)
+  .join("g")
+  .attr("class", "node")
+  .call(d3.drag()
+    .on("start", (event, d) => { if (!event.active) simulation.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; })
+    .on("drag", (event, d) => { d.fx = event.x; d.fy = event.y; })
+    .on("end", (event, d) => { if (!event.active) simulation.alphaTarget(0); d.fx = null; d.fy = null; }));
+
+node.append("circle")
+  .attr("r", d => d.radius)
+  .attr("fill", d => d.color);
+
+node.append("text")
+  .attr("x", d => d.radius + 3)
+  .attr("y", 4)
+  .text(d => d.method + " " + (d.url.length > 30 ? d.url.slice(0, 27) + "..." : d.url));
+
+node.on("click", (event, d) => showDetail(d));
+
+function showDetail(n) {
+  const detailEl = document.getElementById("detail");
+  const tags = (n.tags || []).join(", ") || "-";
+  detailEl.innerHTML = `
+    <div class="detail-row"><span class="detail-label">Method</span><div>${n.method}</div></div>
+    <div class="detail-row"><span class="detail-label">URL</span><div>${n.url}</div></div>
+    <div class="detail-row"><span class="detail-label">Sensitivity</span><div>${n.sensitivity}</div></div>
+    <div class="detail-row"><span class="detail-label">Source</span><div>${n.source}</div></div>
+    <div class="detail-row"><span class="detail-label">Tags</span><div>${tags}</div></div>
+  `;
+}
+
+function doSearch(q) {
+  const ql = q.toLowerCase();
+  node.style("opacity", d => {
+    return !ql || d.url.toLowerCase().includes(ql) || d.method.toLowerCase().includes(ql) || (d.tags||[]).join(",").toLowerCase().includes(ql) ? 1 : 0.15;
+  });
+  link.style("opacity", ql ? 0.15 : 0.6);
+}
+
+simulation.on("tick", () => {
+  link
+    .attr("x1", d => d.source.x).attr("y1", d => d.source.y)
+    .attr("x2", d => d.target.x).attr("y2", d => d.target.y);
+  node.attr("transform", d => `translate(${d.x},${d.y})`);
+  statusEl.textContent = `Nodes: ${nodes.length} | Edges: ${links.length}`;
+});
+
+// Resize handling
+window.addEventListener("resize", () => {
+  width = container.clientWidth;
+  height = container.clientHeight;
+  svg.attr("viewBox", `0 0 ${width} ${height}`);
+  simulation.force("center", d3.forceCenter(width / 2, height / 2));
+  simulation.alpha(0.3).restart();
+});
+</script>
+</body>
+</html>

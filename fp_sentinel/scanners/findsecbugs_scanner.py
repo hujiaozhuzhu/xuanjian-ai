@@ -10,6 +10,7 @@ import os
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any, Optional
 from . import BaseScanner
+from .base import ScannerParseError
 from ..models import ScanResult, ScanTool, Severity
 
 
@@ -79,11 +80,14 @@ class FindSecBugsScanner(BaseScanner):
         Returns:
             List[ScanResult]: 扫描结果
         """
+        self._execution_started()
         # 先编译（如果需要）
         if target_path.endswith(".java") or os.path.isdir(target_path):
             compiled_path = await self._compile_java(target_path, classpath)
             if not compiled_path:
-                logger.error("Java compilation failed")
+                message = "Java compilation failed"
+                self._execution_failed("SCANNER_EXCEPTION", message)
+                logger.error(message)
                 return []
             target_path = compiled_path
 
@@ -102,20 +106,36 @@ class FindSecBugsScanner(BaseScanner):
             # FindSecBugs 输出 XML 到临时文件
             report_path = self._get_report_path(target_path)
             if os.path.exists(report_path):
-                results = self._parse_xml_report(report_path, source_path)
-                os.remove(report_path)
+                try:
+                    results = self._parse_xml_report(report_path, source_path)
+                except ScannerParseError as exc:
+                    self._execution_failed(exc.error_code, str(exc))
+                    return []
+                finally:
+                    try:
+                        os.remove(report_path)
+                    except OSError:
+                        pass
+                self._execution_completed(len(results))
                 return results
             else:
-                logger.warning(f"FindSecBugs report not found: {report_path}")
+                message = f"FindSecBugs report not found: {report_path}"
+                self._execution_failed("PARSE_ERROR", message)
+                logger.warning(message)
                 return []
 
         except FileNotFoundError:
-            logger.error("SpotBugs not found. Please install SpotBugs with FindSecBugs plugin")
+            message = "SpotBugs not found. Please install SpotBugs with FindSecBugs plugin"
+            self._execution_failed("TOOL_MISSING", message)
+            logger.error(message)
             return []
         except asyncio.TimeoutError:
-            logger.error(f"FindSecBugs scan timed out after {self.timeout}s")
+            message = f"FindSecBugs scan timed out after {self.timeout}s"
+            self._execution_failed("TIMEOUT", message)
+            logger.error(message)
             return []
         except Exception as e:
+            self._execution_failed("SCANNER_EXCEPTION", str(e))
             logger.error(f"FindSecBugs scan failed: {e}")
             return []
 
@@ -272,7 +292,9 @@ class FindSecBugsScanner(BaseScanner):
 
         except ET.ParseError as e:
             logger.error(f"Failed to parse FindSecBugs XML report: {e}")
+            raise ScannerParseError(f"Failed to parse FindSecBugs XML report: {e}") from e
         except Exception as e:
             logger.error(f"Error reading FindSecBugs report: {e}")
+            raise ScannerParseError(f"Error reading FindSecBugs report: {e}") from e
 
         return results

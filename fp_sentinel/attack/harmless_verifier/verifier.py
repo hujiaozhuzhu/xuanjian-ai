@@ -578,3 +578,27 @@ class HarmlessVerifier:
             "hardcoded_secret": "Use environment variables or secret managers (HashiCorp Vault, AWS Secrets Manager)",
         }
         return hints.get(vtype, "Review and apply security best practices for this vulnerability type")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Module interface contract (v5.0) — appended, original code untouched above
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+def available() -> bool:
+    """Check if the module can be used (analysis-only, no external deps needed)."""
+    return True  # 纯静态分析，无外部依赖
+
+
+def self_check() -> tuple[bool, str]:
+    """Run basic self-test and return (ok, message)."""
+    try:
+        v = HarmlessVerifier()
+        return (True, "ok")
+    except Exception as exc:
+        return (False, str(exc))
+
+
+def module_version() -> str:
+    """Return the semantic version string of this module."""
+    return "5.0.0-dom"
